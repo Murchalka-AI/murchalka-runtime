@@ -51,6 +51,7 @@ public sealed class ModuleStateStoreTests
                 cancellationToken.ThrowIfCancellationRequested();
                 var record = await store.GetAsync(moduleId, cancellationToken);
                 Assert.NotNull(record);
+                await Task.Yield();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

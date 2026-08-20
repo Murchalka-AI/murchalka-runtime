@@ -64,30 +64,49 @@ public sealed class FileModuleStateStore : IModuleStateStore
     public async Task<InstalledModuleRecord?> GetAsync(ModuleId id, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var path = RecordPath(id);
-        if (!File.Exists(path)) return null;
-        await using var stream = OpenRecordForRead(path);
-        var stored = await JsonSerializer.DeserializeAsync<StoredRecord>(stream, Options, cancellationToken).ConfigureAwait(false);
-        return stored?.ToRecord() ?? throw new InvalidDataException($"State record '{path}' is empty.");
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var path = RecordPath(id);
+            return File.Exists(path)
+                ? await ReadRecordAsync(path, cancellationToken).ConfigureAwait(false)
+                : null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<InstalledModuleRecord>> GetAllAsync(CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var result = new List<InstalledModuleRecord>();
-        foreach (var path in Directory.EnumerateFiles(_paths.State, "*.json").Order(StringComparer.Ordinal))
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await using var stream = OpenRecordForRead(path);
-            var stored = await JsonSerializer.DeserializeAsync<StoredRecord>(stream, Options, cancellationToken).ConfigureAwait(false) ?? throw new InvalidDataException($"State record '{path}' is empty.");
-            result.Add(stored.ToRecord());
+            var result = new List<InstalledModuleRecord>();
+            foreach (var path in Directory.EnumerateFiles(_paths.State, "*.json").Order(StringComparer.Ordinal))
+            {
+                result.Add(await ReadRecordAsync(path, cancellationToken).ConfigureAwait(false));
+            }
+
+            return result;
         }
-        return result;
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private string RecordPath(ModuleId id) => Path.Combine(_paths.State, id.Value + ".json");
 
-    private static FileStream OpenRecordForRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous);
+    private static async Task<InstalledModuleRecord> ReadRecordAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous);
+        var stored = await JsonSerializer.DeserializeAsync<StoredRecord>(stream, Options, cancellationToken).ConfigureAwait(false);
+        return stored?.ToRecord() ?? throw new InvalidDataException($"State record '{path}' is empty.");
+    }
 
     private static void TryDeleteTemporary(string path)
     {
