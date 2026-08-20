@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -50,9 +51,29 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         var proofKey = RandomNumberGenerator.GetBytes(32);
         var startInfo = CreateStartInfo(artifactPath, workingDirectory, socketPath, bundle, artifact, instance, proofKey);
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        if (!process.Start()) { await listener.DisposeAsync().ConfigureAwait(false); throw new InvalidOperationException("Module process could not be started."); }
+        try
+        {
+            if (!process.Start()) throw new ModuleActivationException("process-start-failed", "Module process could not be started.");
+        }
+        catch (ModuleActivationException)
+        {
+            await listener.DisposeAsync().ConfigureAwait(false);
+            process.Dispose();
+            throw;
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
+            await listener.DisposeAsync().ConfigureAwait(false);
+            process.Dispose();
+            throw new ModuleActivationException("process-start-failed", "Module process could not be started.", exception);
+        }
         var managed = new ManagedModule(bundle.Manifest.Id, instance, process, listener);
-        if (!_modules.TryAdd(instance, managed)) { process.Kill(entireProcessTree: true); await listener.DisposeAsync().ConfigureAwait(false); throw new InvalidOperationException("Module instance id collision."); }
+        if (!_modules.TryAdd(instance, managed))
+        {
+            TryKill(process);
+            await listener.DisposeAsync().ConfigureAwait(false);
+            throw new ModuleActivationException("instance-id-collision", "Module instance id collision.");
+        }
         managed.OutputDrain = DrainAsync(process.StandardOutput, CancellationToken.None);
         managed.ErrorDrain = DrainAsync(process.StandardError, CancellationToken.None, managed.ErrorTail);
         try
@@ -65,7 +86,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             if (completed == exited)
             {
                 if (managed.ErrorDrain is not null) await managed.ErrorDrain.ConfigureAwait(false);
-                throw new InvalidOperationException($"Module process exited with code {process.ExitCode} before protocol readiness: {managed.ErrorTail}.");
+                throw new ModuleActivationException($"process-exited-before-ready:{process.ExitCode}", $"Module process exited with code {process.ExitCode} before protocol readiness: {managed.ErrorTail}.");
             }
             var session = await accept.ConfigureAwait(false);
             managed.Session = session;
@@ -75,7 +96,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         catch
         {
             managed.Stopping = true;
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            TryKill(process);
             _modules.TryRemove(instance, out _);
             await listener.DisposeAsync().ConfigureAwait(false);
             process.Dispose();
@@ -108,7 +129,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         }
         catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException or InvalidOperationException)
         {
-            if (!module.Process.HasExited) module.Process.Kill(entireProcessTree: true);
+            TryKill(module.Process);
             await module.Process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -163,6 +184,16 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.Environment["DOTNET_ROOT"] = dotnetRoot;
         start.Environment[$"DOTNET_ROOT_{RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant()}"] = dotnetRoot;
         start.Environment["DOTNET_MULTILEVEL_LOOKUP"] = "0";
+        if (OperatingSystem.IsWindows())
+        {
+            var windowsDirectory = Directory.GetParent(Environment.SystemDirectory)?.FullName;
+            if (string.IsNullOrWhiteSpace(windowsDirectory))
+                throw new ModuleActivationException("windows-directory-unavailable", "The Windows installation directory could not be resolved.");
+            start.Environment["SystemRoot"] = windowsDirectory;
+            start.Environment["WINDIR"] = windowsDirectory;
+            start.Environment["TEMP"] = workingDirectory;
+            start.Environment["TMP"] = workingDirectory;
+        }
         start.Environment["MURCHALKA_SOCKET"] = socketPath;
         start.Environment["MURCHALKA_MODULE_ID"] = bundle.Manifest.Id.Value;
         start.Environment["MURCHALKA_MODULE_VERSION"] = bundle.Manifest.Version.ToString();
@@ -204,8 +235,20 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         var runtimeDirectory = new DirectoryInfo(RuntimeEnvironment.GetRuntimeDirectory());
         var sharedDirectory = runtimeDirectory.Parent?.Parent;
         if (sharedDirectory?.Parent is null || !string.Equals(sharedDirectory.Name, "shared", StringComparison.Ordinal))
-            throw new InvalidOperationException("The active .NET installation root could not be resolved.");
+            throw new ModuleActivationException("dotnet-root-unavailable", "The active .NET installation root could not be resolved.");
         return ResolvePhysicalPath(sharedDirectory.Parent.FullName);
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+        {
+            // The process exited between the state check and termination request.
+        }
     }
 
     private static string ResolvePhysicalPath(string path)

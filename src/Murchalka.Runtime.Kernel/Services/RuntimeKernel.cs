@@ -266,9 +266,9 @@ public sealed class RuntimeKernel : IAsyncDisposable
                 health = await session.ProbeHealthAsync(installed.Manifest.Health.ReadinessTimeout, cancellationToken).ConfigureAwait(false);
                 if (health.Status == ModuleHealthStatus.Ready) break;
             }
-            if (health?.Status != ModuleHealthStatus.Ready) throw new InvalidOperationException("Module did not pass readiness health gate.");
+            if (health?.Status != ModuleHealthStatus.Ready) throw new ModuleActivationException("readiness-failed", "Module did not pass readiness health gate.");
             var activation = await session.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-            if (!activation.Succeeded) throw new InvalidOperationException($"Module activation failed: {activation.ErrorCode}.");
+            if (!activation.Succeeded) throw new ModuleActivationException("activation-control-rejected", $"Module activation failed: {activation.ErrorCode}.");
             _capabilities.Register(installed.Manifest, session.InstanceId, installed.ContentPath);
             return await TransitionAsync(record, ModuleLifecycleState.Active, "health-gate-passed", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
         }
@@ -378,7 +378,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
     private static bool IsUnder(string path, string root) => Path.GetFullPath(path).StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     private SemaphoreSlim Gate(string moduleId) => _moduleGates.GetOrAdd(moduleId, static _ => new SemaphoreSlim(1, 1));
     private static HashSet<ModuleLifecycleState> Set(params ModuleLifecycleState[] states) => [.. states];
-    private static string FailureCode(Exception exception) => "activation-" + exception.GetType().Name.ToLowerInvariant();
+    private static string FailureCode(Exception exception) => "activation-" + (exception is ModuleActivationException activation ? activation.ReasonCode : exception.GetType().Name.ToLowerInvariant());
     private static ModuleStatus ToStatus(InstalledModuleRecord value) => new(value.ModuleId.Value, value.Version.ToString(), value.BundleDigest, value.State, value.Revision, value.UpdatedAt, value.ReasonCode, value.InstanceId, value.DesiredEnabled);
 
     /// <inheritdoc />
