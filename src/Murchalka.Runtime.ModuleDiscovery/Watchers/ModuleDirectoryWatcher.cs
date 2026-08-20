@@ -14,7 +14,10 @@ public sealed class ModuleDirectoryWatcher : IAsyncDisposable
     private readonly Channel<string> _staged = Channel.CreateBounded<string>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = false });
     private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _operationsGate = new();
+    private readonly List<Task> _operations = [];
     private FileSystemWatcher? _watcher;
+    private bool _disposed;
 
     /// <summary>Initializes an inbox watcher.</summary>
     /// <param name="paths">The Runtime paths.</param>
@@ -33,18 +36,20 @@ public sealed class ModuleDirectoryWatcher : IAsyncDisposable
     /// <summary>Starts filesystem observation and performs an initial inbox scan.</summary>
     public void Start()
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_watcher is not null) throw new InvalidOperationException("Watcher is already started.");
-        _watcher = new FileSystemWatcher(_paths.Inbox)
+        var watcher = new FileSystemWatcher(_paths.Inbox)
         {
             Filter = "*",
             IncludeSubdirectories = false,
             NotifyFilter = NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.LastWrite,
-            InternalBufferSize = 64 * 1024,
-            EnableRaisingEvents = true
+            InternalBufferSize = 64 * 1024
         };
-        _watcher.Created += OnCandidate;
-        _watcher.Renamed += OnRenamed;
-        _watcher.Error += OnError;
+        watcher.Created += OnCandidate;
+        watcher.Renamed += OnRenamed;
+        watcher.Error += OnError;
+        _watcher = watcher;
+        watcher.EnableRaisingEvents = true;
         foreach (var path in Directory.EnumerateFiles(_paths.Inbox)) Queue(path);
     }
 
@@ -57,13 +62,34 @@ public sealed class ModuleDirectoryWatcher : IAsyncDisposable
     private void OnRenamed(object sender, RenamedEventArgs args) => Queue(args.FullPath);
     private void OnError(object sender, ErrorEventArgs args)
     {
-        foreach (var path in Directory.EnumerateFiles(_paths.Inbox)) Queue(path);
+        if (_shutdown.IsCancellationRequested) return;
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(_paths.Inbox)) Queue(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (!_shutdown.IsCancellationRequested) _staged.Writer.TryComplete(exception);
+        }
     }
 
     private void Queue(string path)
     {
-        if (!IsCandidate(path) || !_pending.TryAdd(Path.GetFullPath(path), 0)) return;
-        _ = StabilizeAndStageAsync(Path.GetFullPath(path), _shutdown.Token);
+        if (_shutdown.IsCancellationRequested || !IsCandidate(path)) return;
+        var fullPath = Path.GetFullPath(path);
+        if (!_pending.TryAdd(fullPath, 0)) return;
+        var operation = StabilizeAndStageAsync(fullPath, _shutdown.Token);
+        lock (_operationsGate) _operations.Add(operation);
+        _ = RemoveWhenCompletedAsync(operation);
+    }
+
+    private async Task RemoveWhenCompletedAsync(Task operation)
+    {
+        try { await operation.ConfigureAwait(false); }
+        finally
+        {
+            lock (_operationsGate) _operations.Remove(operation);
+        }
     }
 
     private async Task StabilizeAndStageAsync(string path, CancellationToken cancellationToken)
@@ -93,7 +119,9 @@ public sealed class ModuleDirectoryWatcher : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (ChannelClosedException) { }
         catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
         finally { _pending.TryRemove(path, out _); }
     }
 
@@ -115,9 +143,23 @@ public sealed class ModuleDirectoryWatcher : IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
-        _watcher?.Dispose();
+        if (_disposed) return;
+        _disposed = true;
         await _shutdown.CancelAsync().ConfigureAwait(false);
-        _shutdown.Dispose();
+        var watcher = _watcher;
+        _watcher = null;
+        if (watcher is not null)
+        {
+            watcher.EnableRaisingEvents = false;
+            watcher.Created -= OnCandidate;
+            watcher.Renamed -= OnRenamed;
+            watcher.Error -= OnError;
+            watcher.Dispose();
+        }
+        Task[] operations;
+        lock (_operationsGate) operations = [.. _operations];
+        await Task.WhenAll(operations).ConfigureAwait(false);
         _staged.Writer.TryComplete();
+        _shutdown.Dispose();
     }
 }

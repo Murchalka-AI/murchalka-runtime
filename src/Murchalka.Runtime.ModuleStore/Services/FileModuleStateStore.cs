@@ -35,10 +35,11 @@ public sealed class FileModuleStateStore : IModuleStateStore
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(record);
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        string? temporary = null;
         try
         {
             var path = RecordPath(record.ModuleId);
-            var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
             var document = StoredRecord.From(record);
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
@@ -46,11 +47,17 @@ public sealed class FileModuleStateStore : IModuleStateStore
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
                 stream.Flush(true);
             }
-            File.Move(temporary, path, overwrite: true);
+            if (File.Exists(path)) File.Replace(temporary, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            else File.Move(temporary, path);
+            temporary = null;
             UpdateMarker(record);
             return record;
         }
-        finally { _gate.Release(); }
+        finally
+        {
+            if (temporary is not null) TryDeleteTemporary(temporary);
+            _gate.Release();
+        }
     }
 
     /// <inheritdoc />
@@ -59,7 +66,7 @@ public sealed class FileModuleStateStore : IModuleStateStore
         ObjectDisposedException.ThrowIf(_disposed, this);
         var path = RecordPath(id);
         if (!File.Exists(path)) return null;
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+        await using var stream = OpenRecordForRead(path);
         var stored = await JsonSerializer.DeserializeAsync<StoredRecord>(stream, Options, cancellationToken).ConfigureAwait(false);
         return stored?.ToRecord() ?? throw new InvalidDataException($"State record '{path}' is empty.");
     }
@@ -71,7 +78,7 @@ public sealed class FileModuleStateStore : IModuleStateStore
         var result = new List<InstalledModuleRecord>();
         foreach (var path in Directory.EnumerateFiles(_paths.State, "*.json").Order(StringComparer.Ordinal))
         {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+            await using var stream = OpenRecordForRead(path);
             var stored = await JsonSerializer.DeserializeAsync<StoredRecord>(stream, Options, cancellationToken).ConfigureAwait(false) ?? throw new InvalidDataException($"State record '{path}' is empty.");
             result.Add(stored.ToRecord());
         }
@@ -79,6 +86,15 @@ public sealed class FileModuleStateStore : IModuleStateStore
     }
 
     private string RecordPath(ModuleId id) => Path.Combine(_paths.State, id.Value + ".json");
+
+    private static FileStream OpenRecordForRead(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous);
+
+    private static void TryDeleteTemporary(string path)
+    {
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
 
     private void UpdateMarker(InstalledModuleRecord record)
     {
