@@ -12,6 +12,7 @@ public sealed class RuntimeApplication : IAsyncDisposable
     private readonly ProcessModuleSupervisor _supervisor;
     private readonly IModuleStore _moduleStore;
     private readonly IModuleStateStore _stateStore;
+    private readonly IDisposable _bindingStore;
     private readonly HashChainedRootAudit _audit;
     private bool _disposed;
 
@@ -21,14 +22,16 @@ public sealed class RuntimeApplication : IAsyncDisposable
     /// <param name="supervisor">The owned process supervisor.</param>
     /// <param name="moduleStore">The owned immutable module store.</param>
     /// <param name="stateStore">The owned module state store.</param>
+    /// <param name="bindingStore">The owned administrative binding store.</param>
     /// <param name="audit">The owned Root audit.</param>
-    public RuntimeApplication(RuntimePaths paths, RuntimeKernel kernel, ProcessModuleSupervisor supervisor, IModuleStore moduleStore, IModuleStateStore stateStore, HashChainedRootAudit audit)
+    public RuntimeApplication(RuntimePaths paths, RuntimeKernel kernel, ProcessModuleSupervisor supervisor, IModuleStore moduleStore, IModuleStateStore stateStore, IDisposable bindingStore, HashChainedRootAudit audit)
     {
         Paths = paths;
         Kernel = kernel;
         _supervisor = supervisor;
         _moduleStore = moduleStore;
         _stateStore = stateStore;
+        _bindingStore = bindingStore;
         _audit = audit;
     }
 
@@ -46,6 +49,7 @@ public sealed class RuntimeApplication : IAsyncDisposable
         await Kernel.DisposeAsync().ConfigureAwait(false);
         await _supervisor.DisposeAsync().ConfigureAwait(false);
         _stateStore.Dispose();
+        _bindingStore.Dispose();
         _moduleStore.Dispose();
         await _audit.DisposeAsync().ConfigureAwait(false);
     }

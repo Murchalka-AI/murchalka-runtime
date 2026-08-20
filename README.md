@@ -1,6 +1,6 @@
 # Murchalka Runtime
 
-Phase 1 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
+Phase 2 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
 
 Implemented boundaries:
 
@@ -13,9 +13,14 @@ Implemented boundaries:
 - deny-by-default macOS process sandbox (read-only bundle, writable module data, only the private gateway socket);
 - authenticated Module Protocol handshake, health gate, drain and stop;
 - manifest-authoritative capability registration and invocation routing;
+- deterministic exact-module, capability, and category dependency resolution;
+- SemVer, qualifier, scope, cardinality, conflict, and hard-cycle enforcement;
+- revisioned scoped administrator bindings with optimistic concurrency and Root audit;
+- live dependency endpoint updates and fail-closed dependency-loss reconciliation;
+- generated Runtime composition locks that preserve exact module dependencies in a namespaced extension;
 - local HTTP diagnostics plus enable/disable operations.
 
-Dependency/category resolution, scoped bindings, pipelines, events, provider state and migrations intentionally remain later phases. A bundle declaring required dependencies is retained in `PendingDependencies` and is never executed.
+Pipelines, events, provider state, stateful migration, profile bindings, and configuration/secret providers intentionally remain later phases. Missing providers, ambiguous administrator selection, incompatible ranges, permission gaps, conflicts, and cycles remain unroutable in explicit lifecycle states.
 
 ## Build and test
 
@@ -45,4 +50,4 @@ git push origin v0.1.0
 dotnet run --project src/Murchalka.Runtime.Host -- --root ./var
 ```
 
-The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
+The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; generated locks live in `modules/locks`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant. Use `GET /v1/bindings` and `PUT /v1/bindings?expectedRevision=N` for optimistic-concurrency administration.

@@ -1,7 +1,10 @@
 using Murchalka.Runtime.Audit.Services;
+using Murchalka.Runtime.Bindings.Services;
 using Murchalka.Runtime.Bootstrap.Hosting;
 using Murchalka.Runtime.Capabilities.Registry;
 using Murchalka.Runtime.Contracts.Common;
+using Murchalka.Runtime.Dependencies.Locks;
+using Murchalka.Runtime.Dependencies.Resolution;
 using Murchalka.Runtime.Kernel.Services;
 using Murchalka.Runtime.ModuleDiscovery.Watchers;
 using Murchalka.Runtime.ModuleStore.Services;
@@ -12,7 +15,7 @@ using Murchalka.Runtime.RootSecurity.Trust;
 
 namespace Murchalka.Runtime.Bootstrap.Composition;
 
-/// <summary>Creates the Phase 1 Runtime composition without product modules.</summary>
+/// <summary>Creates the product-neutral Runtime composition without product modules.</summary>
 public static class RuntimeBootstrap
 {
     /// <summary>Creates a fully composed Runtime application.</summary>
@@ -33,8 +36,11 @@ public static class RuntimeBootstrap
         var grants = new PermissionGrantStore(paths, trust, clock);
         var supervisor = new ProcessModuleSupervisor(paths);
         var capabilities = new CapabilityRegistry(supervisor, audit);
+        var bindings = new FileBindingStore(paths, "local");
+        var resolver = new DependencyResolver();
+        var locks = new CompositionLockStore(paths, clock);
         var watcher = new ModuleDirectoryWatcher(paths, clock, discoveryPollInterval);
-        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, audit, clock);
-        return new RuntimeApplication(paths, kernel, supervisor, store, state, audit);
+        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, resolver, locks, audit, clock);
+        return new RuntimeApplication(paths, kernel, supervisor, store, state, bindings, audit);
     }
 }

@@ -14,9 +14,10 @@ public interface IModuleSupervisor
     /// <summary>Starts an installed bundle and completes its authenticated handshake.</summary>
     /// <param name="bundle">The installed bundle.</param>
     /// <param name="grant">The effective permission decision.</param>
+    /// <param name="dependencies">The resolved dependency endpoints.</param>
     /// <param name="cancellationToken">Cancels startup.</param>
     /// <returns>The authenticated gateway session.</returns>
-    Task<IModuleGatewaySession> StartAsync(InstalledBundle bundle, PermissionDecision grant, CancellationToken cancellationToken);
+    Task<IModuleGatewaySession> StartAsync(InstalledBundle bundle, PermissionDecision grant, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken);
 
     /// <summary>Drains and stops an instance.</summary>
     /// <param name="instanceId">The instance to stop.</param>

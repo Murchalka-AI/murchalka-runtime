@@ -27,14 +27,26 @@ public sealed class CapabilityRegistry : ICapabilityRegistry
     }
 
     /// <inheritdoc/>
-    public void Register(ModuleManifest manifest, InstanceId instanceId, string contentPath)
+    public void Register(ModuleManifest manifest, InstanceId instanceId, string contentPath, string bundleDigest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         foreach (var capability in manifest.Capabilities)
         {
             var contract = ResolveInside(contentPath, capability.ContractPath);
             if (!File.Exists(contract)) throw new InvalidDataException($"Declared capability contract '{capability.ContractPath}' is missing.");
-            var provider = new CapabilityProvider(capability.Id, capability.Version, manifest.Id, instanceId, capability.Category, contract, capability.Timeout);
+            var provider = new CapabilityProvider(
+                capability.Id,
+                capability.Version,
+                manifest.Id,
+                instanceId,
+                capability.Category,
+                contract,
+                capability.Timeout,
+                "default",
+                manifest.Version,
+                bundleDigest,
+                capability.Qualifiers,
+                capability.Scopes);
             var policy = LoadPolicy(contract);
             if (!_providers.TryAdd(new ProviderKey(instanceId, capability.Id, capability.Version), new RegisteredProvider(provider, policy)))
             {

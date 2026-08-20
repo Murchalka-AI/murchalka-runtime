@@ -38,6 +38,19 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     public async Task<ControlResult> SendControlAsync(ControlMessageKind kind, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var operation = CreateControl(kind, timeout);
+        return await SendControlAsync(operation, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public Task<ControlResult> UpdateDependenciesAsync(DependencyEndpointsSnapshot snapshot, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var data = JsonSerializer.SerializeToElement(snapshot);
+        return SendControlAsync(new ControlMessage(Guid.NewGuid().ToString("N"), ControlMessageKind.UpdateBindings, DateTimeOffset.UtcNow.Add(timeout), data), cancellationToken);
+    }
+
+    private async Task<ControlResult> SendControlAsync(ControlMessage operation, CancellationToken cancellationToken)
+    {
         var frame = await ExchangeAsync("control", operation, "controlResult", cancellationToken).ConfigureAwait(false);
         var result = GatewayFrameCodec.PayloadAs<ControlResult>(frame);
         if (result.OperationId != operation.OperationId) throw new InvalidDataException("Control result operation id does not match the request.");

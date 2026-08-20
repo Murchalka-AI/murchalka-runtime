@@ -122,6 +122,7 @@ jobs:
           cp -R artifacts/publish/. "${release_root}/"
           cp README.md SECURITY.md "${release_root}/"
           cp docs/operations/phase1-runbook.md "${release_root}/docs/operations/"
+          cp docs/operations/phase2-runbook.md "${release_root}/docs/operations/"
 
           tar -C artifacts/release -czf "artifacts/release/${release_name}.tar.gz" "${release_name}"
           (

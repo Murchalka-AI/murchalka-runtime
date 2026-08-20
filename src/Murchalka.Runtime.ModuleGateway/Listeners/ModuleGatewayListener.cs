@@ -23,7 +23,7 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
     /// <param name="socketPath">The Unix-domain socket path.</param>
     public ModuleGatewayListener(string socketPath)
     {
-        if (!Socket.OSSupportsUnixDomainSockets) throw new PlatformNotSupportedException("Phase 1 process gateway requires Unix-domain sockets.");
+        if (!Socket.OSSupportsUnixDomainSockets) throw new PlatformNotSupportedException("The process gateway requires Unix-domain sockets.");
         _socketPath = Path.GetFullPath(socketPath);
         Directory.CreateDirectory(Path.GetDirectoryName(_socketPath)!);
         if (File.Exists(_socketPath)) File.Delete(_socketPath);
@@ -40,9 +40,10 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
     /// <param name="expectedProcessIdentity">The expected operating-system process identity.</param>
     /// <param name="proofKey">The ephemeral key used to authenticate the launched process.</param>
     /// <param name="grant">The permission grant supplied to the module.</param>
+    /// <param name="dependencies">The resolved dependency endpoints supplied to the module.</param>
     /// <param name="cancellationToken">A token that cancels the accept operation.</param>
     /// <returns>An authenticated module gateway session.</returns>
-    public async Task<ModuleGatewaySession> AcceptAsync(InstalledBundle bundle, RuntimeArtifact artifact, InstanceId expectedInstance, string expectedProcessIdentity, ReadOnlyMemory<byte> proofKey, PermissionDecision grant, CancellationToken cancellationToken)
+    public async Task<ModuleGatewaySession> AcceptAsync(InstalledBundle bundle, RuntimeArtifact artifact, InstanceId expectedInstance, string expectedProcessIdentity, ReadOnlyMemory<byte> proofKey, PermissionDecision grant, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
     {
         var socket = await _listener.AcceptAsync(cancellationToken).ConfigureAwait(false);
         var stream = new NetworkStream(socket, ownsSocket: true);
@@ -64,7 +65,7 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
             using var empty = JsonDocument.Parse("{}");
             await GatewayFrameCodec.WriteAsync(stream, "configurationSnapshot", new ConfigurationSnapshot(0, new string('0', 64).Insert(0, "sha256:"), empty.RootElement.Clone()), cancellationToken).ConfigureAwait(false);
             await GatewayFrameCodec.WriteAsync(stream, "permissionGrantSnapshot", new PermissionGrantSnapshot(grant.Revision, grant.GrantId, bundle.Digest, now, grant.ExpiresAt, grant.Grant), cancellationToken).ConfigureAwait(false);
-            await GatewayFrameCodec.WriteAsync(stream, "dependencyEndpointsSnapshot", new DependencyEndpointsSnapshot(0, []), cancellationToken).ConfigureAwait(false);
+            await GatewayFrameCodec.WriteAsync(stream, "dependencyEndpointsSnapshot", dependencies, cancellationToken).ConfigureAwait(false);
             var readyFrame = await GatewayFrameCodec.ReadAsync(stream, cancellationToken).ConfigureAwait(false);
             RequireKind(readyFrame, "moduleReady");
             var ready = GatewayFrameCodec.PayloadAs<ModuleReady>(readyFrame);

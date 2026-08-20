@@ -8,6 +8,12 @@
           "Murchalka.ModuleProtocol.Contracts": "[0.1.12, )"
         }
       },
+      "murchalka.runtime.dependencies": {
+        "type": "Project",
+        "dependencies": {
+          "Murchalka.Runtime.Contracts": "[0.1.0, )"
+        }
+      },
       "murchalka.runtime.modulediscovery": {
         "type": "Project",
         "dependencies": {
@@ -18,7 +24,7 @@
         "type": "CentralTransitive",
         "requested": "[0.1.12, )",
         "resolved": "0.1.12",
-        "contentHash": "sUhPoDVG8bc9XsJferva/p4wVSTn4s1h0i2dwKBR05+nZP8F5Lh2TT+2S0J9qB0Nzs1wIBrolssEq04tIpHhXw=="
+        "contentHash": "i2dOr++fQDkcPuDQhx4gS1VAHW5rtB/BDjqloYcYJdlvgUg8s6ftijupgWltOUNrqRE3UwYvtB8W3DJ3dIxtnw=="
       }
     }
   }

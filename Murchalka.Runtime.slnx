@@ -20,14 +20,18 @@
   </Folder>
   <Folder Name="/Solution Items/docs/">
     <File Path="docs/phase1-completion-report.md" />
+    <File Path="docs/phase2-completion-report.md" />
   </Folder>
   <Folder Name="/Solution Items/docs/adr/">
     <File Path="docs/adr/0001-microkernel-boundary.md" />
     <File Path="docs/adr/0002-bundle-signing-and-store.md" />
     <File Path="docs/adr/0003-lifecycle-audit-and-recovery.md" />
+    <File Path="docs/adr/0004-dependency-cardinality-and-selection.md" />
+    <File Path="docs/adr/0005-scoped-binding-resolution.md" />
   </Folder>
   <Folder Name="/Solution Items/docs/operations/">
     <File Path="docs/operations/phase1-runbook.md" />
+    <File Path="docs/operations/phase2-runbook.md" />
     <File Path="docs/operations/release.md" />
   </Folder>
   <Folder Name="/src/">
@@ -39,6 +43,8 @@
     <Project Path="src/Murchalka.Runtime.ModuleGateway/Murchalka.Runtime.ModuleGateway.csproj" />
     <Project Path="src/Murchalka.Runtime.ModuleSupervisor/Murchalka.Runtime.ModuleSupervisor.csproj" />
     <Project Path="src/Murchalka.Runtime.Capabilities/Murchalka.Runtime.Capabilities.csproj" />
+    <Project Path="src/Murchalka.Runtime.Dependencies/Murchalka.Runtime.Dependencies.csproj" />
+    <Project Path="src/Murchalka.Runtime.Bindings/Murchalka.Runtime.Bindings.csproj" />
     <Project Path="src/Murchalka.Runtime.Kernel/Murchalka.Runtime.Kernel.csproj" />
     <Project Path="src/Murchalka.Runtime.Bootstrap/Murchalka.Runtime.Bootstrap.csproj" />
     <Project Path="src/Murchalka.Runtime.Host/Murchalka.Runtime.Host.csproj" />

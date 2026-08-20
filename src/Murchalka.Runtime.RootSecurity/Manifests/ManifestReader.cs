@@ -37,15 +37,20 @@ public static class ManifestReader
             var execution = RequiredObject(value, "execution");
             return new ProvidedCapability(new CapabilityId(RequiredString(value, "id")), RequiredString(value, "category"),
                 SemanticVersion.Parse(RequiredString(value, "version")), RequiredString(value, "contract"),
-                ParseDuration(RequiredString(execution, "timeout")));
+                ParseDuration(RequiredString(execution, "timeout")), ReadValues(value["qualifiers"]), ReadScopes(value["scope"]));
         }).ToArray() ?? [];
+        var required = root["requires"]?.AsObject();
+        var moduleRequirements = ReadModuleRequirements(required?["modules"]);
+        var capabilityRequirements = ReadCapabilityRequirements(required?["capabilities"], isOptional: false);
+        var optionalRequirements = ReadCapabilityRequirements(root["optional"]?["capabilities"], isOptional: true);
+        var conflicts = ReadModuleRequirements(root["conflicts"]?["modules"]);
         var readiness = RequiredObject(health, "readiness");
         var permissions = root["permissions"] ?? new JsonObject();
-        var hasRequiredDependencies = root["requires"] is JsonObject requires && requires.Any(pair => pair.Value is JsonArray array && array.Count > 0);
         return new ModuleManifest(
             new ModuleId(RequiredString(metadata, "id")), RequiredString(metadata, "name"), SemanticVersion.Parse(RequiredString(metadata, "version")),
             RequiredString(metadata, "publisher"), compatibility["runtime"]?.GetValue<string>() ?? "*", protocol,
-            runtimeArtifacts, capabilities, hasRequiredDependencies, JsonSerializer.SerializeToElement(permissions),
+            runtimeArtifacts, capabilities, moduleRequirements, capabilityRequirements, optionalRequirements, conflicts,
+            JsonSerializer.SerializeToElement(permissions),
             new HealthPolicy(ParseDuration(RequiredString(health, "startupTimeout")), ParseDuration(RequiredString(readiness, "timeout")), readiness["failureThreshold"]!.GetValue<int>()),
             new ActivationPolicy(RequiredString(activation, "mode"), RequiredString(activation, "failurePolicy"), activation["hotReload"]!.GetValue<bool>(), ParseDuration(RequiredString(activation, "drainTimeout"))),
             JsonSerializer.SerializeToElement(root));
@@ -54,6 +59,86 @@ public static class ManifestReader
     private static JsonObject RequiredObject(JsonObject value, string name) => value[name]?.AsObject() ?? throw new InvalidDataException($"Manifest object '{name}' is missing.");
     private static string RequiredString(JsonObject value, string name) => value[name]?.GetValue<string>() ?? throw new InvalidDataException($"Manifest value '{name}' is missing.");
     private static HashSet<string> ReadSet(JsonNode? node) => node is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToHashSet(StringComparer.Ordinal) : [];
+
+    private static Dictionary<string, JsonElement> ReadValues(JsonNode? node) => node is JsonObject value
+        ? value.ToDictionary(pair => pair.Key, pair => JsonSerializer.SerializeToElement(pair.Value), StringComparer.Ordinal)
+        : new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
+    private static HashSet<BindingScopeType> ReadScopes(JsonNode? node) => node is JsonArray array
+        ? array.Select(item => ParseScope(item!.GetValue<string>())).ToHashSet()
+        : Enum.GetValues<BindingScopeType>().ToHashSet();
+
+    private static ModuleRequirement[] ReadModuleRequirements(JsonNode? node) => node is JsonArray array
+        ? array.Select(item =>
+        {
+            var value = item!.AsObject();
+            return new ModuleRequirement(
+                new ModuleId(RequiredString(value, "id")),
+                VersionRangeExpression.Parse(RequiredString(value, "version")),
+                value["reason"]?.GetValue<string>());
+        }).ToArray()
+        : [];
+
+    private static CapabilityRequirement[] ReadCapabilityRequirements(JsonNode? node, bool isOptional) => node is JsonArray array
+        ? array.Select(item =>
+        {
+            var value = item!.AsObject();
+            var capability = value["capability"]?.GetValue<string>();
+            var category = value["category"]?.GetValue<string>();
+            var cardinality = ParseCardinality(RequiredString(value, "cardinality"));
+            var selection = value["selection"]?.GetValue<string>() is { } selectionText
+                ? ParseSelection(selectionText)
+                : RequirementSelectionMode.Admin;
+            RequirementCondition? condition = null;
+            if (value["when"] is JsonObject when)
+                condition = new RequirementCondition(RequiredString(when, "configuration"), JsonSerializer.SerializeToElement(when["equals"]));
+            return new CapabilityRequirement(
+                RequiredString(value, "requirementId"),
+                capability is null ? null : new CapabilityId(capability),
+                category,
+                VersionRangeExpression.Parse(value["version"]?.GetValue<string>() ?? "*"),
+                ReadValues(value["qualifiers"]),
+                cardinality,
+                selection,
+                value["scope"]?.GetValue<string>() is { } scope ? ParseScope(scope) : null,
+                value["fallback"]?.GetValue<string>(),
+                condition,
+                isOptional);
+        }).ToArray()
+        : [];
+
+    private static BindingScopeType ParseScope(string value) => value switch
+    {
+        "global" => BindingScopeType.Global,
+        "tenant" => BindingScopeType.Tenant,
+        "workspace" => BindingScopeType.Workspace,
+        "person" => BindingScopeType.Person,
+        "group" => BindingScopeType.Group,
+        "module" => BindingScopeType.Module,
+        "node" => BindingScopeType.Node,
+        "session" => BindingScopeType.Session,
+        _ => throw new InvalidDataException($"Unknown binding scope '{value}'.")
+    };
+
+    private static RequirementCardinality ParseCardinality(string value) => value switch
+    {
+        "exactlyOne" => RequirementCardinality.ExactlyOne,
+        "zeroOrOne" => RequirementCardinality.ZeroOrOne,
+        "oneOrMany" => RequirementCardinality.OneOrMany,
+        "zeroOrMany" => RequirementCardinality.ZeroOrMany,
+        "allMatching" => RequirementCardinality.AllMatching,
+        _ => throw new InvalidDataException($"Unknown requirement cardinality '{value}'.")
+    };
+
+    private static RequirementSelectionMode ParseSelection(string value) => value switch
+    {
+        "admin" => RequirementSelectionMode.Admin,
+        "automatic" => RequirementSelectionMode.Automatic,
+        "preferred" => RequirementSelectionMode.Preferred,
+        "consumerPolicy" => RequirementSelectionMode.ConsumerPolicy,
+        "scoped" => RequirementSelectionMode.Scoped,
+        _ => throw new InvalidDataException($"Unknown requirement selection mode '{value}'.")
+    };
 
     internal static TimeSpan ParseDuration(string value)
     {

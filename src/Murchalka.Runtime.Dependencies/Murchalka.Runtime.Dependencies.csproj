@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Deterministic module and capability dependency resolution and composition locks.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" /></ItemGroup>
+</Project>

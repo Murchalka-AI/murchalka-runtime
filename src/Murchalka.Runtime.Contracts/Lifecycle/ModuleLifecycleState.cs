@@ -19,6 +19,10 @@ public enum ModuleLifecycleState
     PendingBinding,
     /// <summary>The module requires a valid permission grant.</summary>
     PendingPermission,
+    /// <summary>An installed dependency exists but no compatible version can satisfy the module.</summary>
+    Incompatible,
+    /// <summary>A dependency cycle or declared module conflict prevents activation.</summary>
+    Conflict,
     /// <summary>The verified bundle is being installed.</summary>
     Installing,
     /// <summary>Module-owned state migrations are running.</summary>

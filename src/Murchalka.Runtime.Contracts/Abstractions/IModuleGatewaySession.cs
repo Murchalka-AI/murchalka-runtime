@@ -27,6 +27,13 @@ public interface IModuleGatewaySession : IAsyncDisposable
     /// <returns>The module control result.</returns>
     Task<ControlResult> SendControlAsync(ControlMessageKind kind, TimeSpan timeout, CancellationToken cancellationToken);
 
+    /// <summary>Atomically applies a new resolved dependency snapshot.</summary>
+    /// <param name="snapshot">The new immutable dependency snapshot.</param>
+    /// <param name="timeout">The update operation timeout.</param>
+    /// <param name="cancellationToken">Cancels the operation.</param>
+    /// <returns>The module control result.</returns>
+    Task<ControlResult> UpdateDependenciesAsync(DependencyEndpointsSnapshot snapshot, TimeSpan timeout, CancellationToken cancellationToken);
+
     /// <summary>Sends a capability invocation to the module.</summary>
     /// <param name="invocation">The invocation envelope.</param>
     /// <param name="cancellationToken">Cancels the invocation.</param>

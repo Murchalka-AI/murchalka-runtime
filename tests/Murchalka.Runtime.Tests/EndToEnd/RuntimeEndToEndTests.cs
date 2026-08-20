@@ -9,7 +9,7 @@ using Murchalka.Runtime.Tests.Infrastructure;
 
 namespace Murchalka.Runtime.Tests.EndToEnd;
 
-/// <summary>Verifies complete Phase 1 runtime workflows with a real module process.</summary>
+/// <summary>Verifies complete Runtime workflows with a real module process.</summary>
 public sealed class RuntimeEndToEndTests
 {
     /// <summary>Verifies that an active module is safely reconciled after a runtime restart.</summary>
@@ -55,6 +55,13 @@ public sealed class RuntimeEndToEndTests
         var active = await WaitForStateAsync(runtime, ModuleLifecycleState.Active);
         var provider = Assert.Single(runtime.Kernel.Capabilities.Snapshot());
         Assert.Equal(active.InstanceId, provider.InstanceId.Value);
+        var generatedLock = Path.Combine(paths.Locks, "dev.murchalka.hello-test.lock.json");
+        Assert.True(File.Exists(generatedLock));
+        using (var lockDocument = JsonDocument.Parse(await File.ReadAllTextAsync(generatedLock)))
+        {
+            Assert.Equal(active.BundleDigest, lockDocument.RootElement.GetProperty("module").GetProperty("bundleDigest").GetString());
+            Assert.Empty(lockDocument.RootElement.GetProperty("dependencies").EnumerateArray());
+        }
 
         var payload = JsonSerializer.SerializeToElement(new { name = "Murchalka" });
         var invocation = new InvocationEnvelope(Guid.NewGuid(), new CapabilityId("hello.greet"), SemanticVersion.Parse("1.0.0"), provider.InstanceId,

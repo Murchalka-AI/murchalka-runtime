@@ -1,13 +1,15 @@
 using System.Net;
+using System.Text.Json;
 using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.Runtime.Bootstrap.Composition;
+using Murchalka.Runtime.Contracts.Bindings;
 using Murchalka.Runtime.Contracts.Common;
 
 var root = ReadOption(args, "--root") ?? Path.Combine(AppContext.BaseDirectory, "var");
 var url = ReadOption(args, "--url") ?? "http://127.0.0.1:5078";
 var endpoint = new Uri(url, UriKind.Absolute);
 if (endpoint.Scheme != Uri.UriSchemeHttp || !IPAddress.TryParse(endpoint.Host, out var address) || !IPAddress.IsLoopback(address))
-    throw new InvalidOperationException("Phase 1 control API must bind to an explicit HTTP loopback address.");
+    throw new InvalidOperationException("The Runtime control API must bind to an explicit HTTP loopback address.");
 
 await using var runtime = RuntimeBootstrap.Create(root);
 await runtime.Kernel.StartAsync();
@@ -26,6 +28,25 @@ app.MapGet("/v1/capabilities", () => Results.Ok(runtime.Kernel.Capabilities.Snap
     instance = value.InstanceId.Value,
     category = value.Category
 })));
+app.MapGet("/v1/bindings", async (CancellationToken cancellationToken) =>
+    Results.Ok(BindingDocumentJson.Serialize(await runtime.Kernel.GetBindingsAsync(cancellationToken))));
+app.MapPut("/v1/bindings", async (HttpRequest request, long expectedRevision, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var document = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        var updated = await runtime.Kernel.ReplaceBindingsAsync(document, expectedRevision, cancellationToken);
+        return Results.Ok(BindingDocumentJson.Serialize(updated));
+    }
+    catch (BindingRevisionConflictException exception)
+    {
+        return Results.Conflict(new { code = "binding-revision-conflict", expectedRevision = exception.ExpectedRevision, actualRevision = exception.ActualRevision });
+    }
+    catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentOutOfRangeException)
+    {
+        return Results.BadRequest(new { code = "binding-document-invalid", message = exception.Message });
+    }
+});
 app.MapPost("/v1/modules/{moduleId}/enable", async (string moduleId, CancellationToken cancellationToken) =>
 {
     try { return await runtime.Kernel.EnableAsync(new ModuleId(moduleId), cancellationToken) is { } status ? Results.Ok(status) : Results.NotFound(); }

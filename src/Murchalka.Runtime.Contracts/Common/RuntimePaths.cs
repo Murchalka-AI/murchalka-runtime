@@ -45,11 +45,15 @@ public sealed record RuntimePaths
     public string TrustedPublishers => Path.Combine(Configuration, "trusted-publishers.json");
     /// <summary>Gets the permission grant directory.</summary>
     public string Grants => Path.Combine(Configuration, "grants");
+    /// <summary>Gets the administrative binding document path.</summary>
+    public string Bindings => Path.Combine(Configuration, "murchalka.bindings.yaml");
+    /// <summary>Gets the generated composition lock directory.</summary>
+    public string Locks => Path.Combine(Modules, "locks");
 
     /// <summary>Creates every required Runtime directory when it is absent.</summary>
     public void EnsureCreated()
     {
-        foreach (var path in new[] { Configuration, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, Sockets, ModuleData, Audit, Grants })
+        foreach (var path in new[] { Configuration, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, Sockets, ModuleData, Audit, Grants, Locks })
             Directory.CreateDirectory(path);
     }
 }

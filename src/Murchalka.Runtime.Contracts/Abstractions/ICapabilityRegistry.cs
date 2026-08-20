@@ -11,7 +11,8 @@ public interface ICapabilityRegistry
     /// <param name="manifest">The verified module manifest.</param>
     /// <param name="instanceId">The authenticated provider instance.</param>
     /// <param name="contentPath">The immutable bundle content path.</param>
-    void Register(ModuleManifest manifest, InstanceId instanceId, string contentPath);
+    /// <param name="bundleDigest">The authenticated provider bundle digest.</param>
+    void Register(ModuleManifest manifest, InstanceId instanceId, string contentPath, string bundleDigest);
 
     /// <summary>Removes every capability owned by the specified instance.</summary>
     /// <param name="moduleId">The owning module.</param>

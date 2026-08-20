@@ -36,11 +36,11 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
     public event EventHandler<ModuleExitedEventArgs>? ModuleExited;
 
     /// <inheritdoc />
-    public async Task<IModuleGatewaySession> StartAsync(InstalledBundle bundle, PermissionDecision grant, CancellationToken cancellationToken)
+    public async Task<IModuleGatewaySession> StartAsync(InstalledBundle bundle, PermissionDecision grant, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(bundle);
-        var artifact = SelectArtifact(bundle.Manifest);
+        var artifact = RuntimeArtifactSelector.SelectProcess(bundle.Manifest, RuntimeConstants.ProtocolVersion);
         var artifactPath = ResolveInside(bundle.ContentPath, artifact.EntryPoint);
         if (!File.Exists(artifactPath)) throw new FileNotFoundException("Selected module artifact is missing.", artifactPath);
         var instance = new InstanceId($"{SafeInstancePrefix(bundle.Manifest.Id.Value)}-{Guid.NewGuid():N}");
@@ -80,7 +80,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             startup.CancelAfter(bundle.Manifest.Health.StartupTimeout);
-            var accept = listener.AcceptAsync(bundle, artifact, instance, process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), proofKey, grant, startup.Token);
+            var accept = listener.AcceptAsync(bundle, artifact, instance, process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), proofKey, grant, dependencies, startup.Token);
             var exited = process.WaitForExitAsync(startup.Token);
             var completed = await Task.WhenAny(accept, exited).ConfigureAwait(false);
             if (completed == exited)
@@ -148,17 +148,6 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         var exitCode = module.Process.ExitCode;
         ModuleExited?.Invoke(this, new ModuleExitedEventArgs(module.ModuleId, module.InstanceId, exitCode, "process-exited"));
         await DisposeManagedAsync(module).ConfigureAwait(false);
-    }
-
-    private static RuntimeArtifact SelectArtifact(ModuleManifest manifest)
-    {
-        var os = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : OperatingSystem.IsMacOS() ? "macos" : "unknown";
-        var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
-        var candidates = manifest.RuntimeArtifacts.Where(value => value.Mode == "process" && value.ProtocolVersion == RuntimeConstants.ProtocolVersion &&
-            (value.OperatingSystems.Count == 0 || value.OperatingSystems.Contains(os)) && (value.Architectures.Count == 0 || value.Architectures.Contains(architecture))).ToArray();
-        return candidates.Length == 1 ? candidates[0] : candidates.Length == 0
-            ? throw new PlatformNotSupportedException("No compatible process artifact is available.")
-            : throw new InvalidOperationException("Manifest declares multiple equally compatible process artifacts.");
     }
 
     private static ProcessStartInfo CreateStartInfo(string artifactPath, string workingDirectory, string socketPath, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, byte[] proofKey)
