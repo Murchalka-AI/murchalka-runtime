@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Murchalka.ModuleProtocol.Contracts;
@@ -141,6 +142,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
 
     private static ProcessStartInfo CreateStartInfo(string artifactPath, string workingDirectory, string socketPath, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, byte[] proofKey)
     {
+        var dotnetRoot = ResolveDotnetRoot();
         var start = new ProcessStartInfo
         {
             FileName = OperatingSystem.IsMacOS() ? "/usr/bin/sandbox-exec" : artifactPath,
@@ -154,10 +156,13 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         if (OperatingSystem.IsMacOS())
         {
             start.ArgumentList.Add("-p");
-            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, socketPath));
+            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, socketPath, dotnetRoot));
             start.ArgumentList.Add(artifactPath);
         }
         start.Environment.Clear();
+        start.Environment["DOTNET_ROOT"] = dotnetRoot;
+        start.Environment[$"DOTNET_ROOT_{RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant()}"] = dotnetRoot;
+        start.Environment["DOTNET_MULTILEVEL_LOOKUP"] = "0";
         start.Environment["MURCHALKA_SOCKET"] = socketPath;
         start.Environment["MURCHALKA_MODULE_ID"] = bundle.Manifest.Id.Value;
         start.Environment["MURCHALKA_MODULE_VERSION"] = bundle.Manifest.Version.ToString();
@@ -170,7 +175,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         return start;
     }
 
-    private static string CreateMacSandboxProfile(string artifactPath, string contentPath, string workingDirectory, string socketPath)
+    private static string CreateMacSandboxProfile(string artifactPath, string contentPath, string workingDirectory, string socketPath, string dotnetRoot)
     {
         static string Literal(string value) => "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
         var logicalArtifact = Path.GetFullPath(artifactPath);
@@ -189,9 +194,18 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             $"(allow process-exec (literal {Literal(logicalArtifact)}) (literal {Literal(ResolvePhysicalPath(artifactPath))}))",
             "(allow process-info*)",
             "(allow file-read-metadata)",
-            $"(allow file-read* (subpath {Literal(logicalContent)}) (subpath {Literal(canonicalContent)}) (subpath \"/usr/local/share/dotnet\") (subpath \"/System\") (subpath \"/usr/lib\"))",
+            $"(allow file-read* (subpath {Literal(logicalContent)}) (subpath {Literal(canonicalContent)}) (subpath {Literal(dotnetRoot)}) (subpath \"/System\") (subpath \"/usr/lib\"))",
             $"(allow file-write* (subpath {Literal(logicalWorking)}) (subpath {Literal(canonicalWorking)}))",
             $"(allow network-outbound (literal {Literal(logicalSocket)}) (literal {Literal(canonicalSocket)}))");
+    }
+
+    private static string ResolveDotnetRoot()
+    {
+        var runtimeDirectory = new DirectoryInfo(RuntimeEnvironment.GetRuntimeDirectory());
+        var sharedDirectory = runtimeDirectory.Parent?.Parent;
+        if (sharedDirectory?.Parent is null || !string.Equals(sharedDirectory.Name, "shared", StringComparison.Ordinal))
+            throw new InvalidOperationException("The active .NET installation root could not be resolved.");
+        return ResolvePhysicalPath(sharedDirectory.Parent.FullName);
     }
 
     private static string ResolvePhysicalPath(string path)
