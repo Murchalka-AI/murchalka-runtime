@@ -201,13 +201,13 @@
         "type": "CentralTransitive",
         "requested": "[0.1.12, )",
         "resolved": "0.1.12",
-        "contentHash": "i2dOr++fQDkcPuDQhx4gS1VAHW5rtB/BDjqloYcYJdlvgUg8s6ftijupgWltOUNrqRE3UwYvtB8W3DJ3dIxtnw=="
+        "contentHash": "sUhPoDVG8bc9XsJferva/p4wVSTn4s1h0i2dwKBR05+nZP8F5Lh2TT+2S0J9qB0Nzs1wIBrolssEq04tIpHhXw=="
       },
       "Murchalka.ModuleProtocol.Json": {
         "type": "CentralTransitive",
         "requested": "[0.1.12, )",
         "resolved": "0.1.12",
-        "contentHash": "HLRTSRUqQ8XtdVTm2sE/XbueGFDrO3B+TZ4BSeG707QaL/zSMoUiqHI63Rno/MH2bhnEmLimlWf2KS5XAwQK/g==",
+        "contentHash": "l+YoUo+eqKFm5YIGG8s/Nj6//tkglEqi200LYLqaG5E0AEe/lUyPWUFclaDX1sADZ+rvsXynJUZmgVn8ZrKCcg==",
         "dependencies": {
           "JsonSchema.Net": "9.4.0",
           "Murchalka.ModuleProtocol.Contracts": "0.1.12",
