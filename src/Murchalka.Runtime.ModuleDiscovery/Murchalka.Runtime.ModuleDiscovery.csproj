@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Stable inbox discovery and atomic staging.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" /></ItemGroup>
+</Project>

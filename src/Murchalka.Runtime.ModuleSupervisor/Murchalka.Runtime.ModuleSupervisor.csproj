@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Isolated local process lifecycle supervision.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.ModuleGateway/Murchalka.Runtime.ModuleGateway.csproj" />
+  </ItemGroup>
+</Project>

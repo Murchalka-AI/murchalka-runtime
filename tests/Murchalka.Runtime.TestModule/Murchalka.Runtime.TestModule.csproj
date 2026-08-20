@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseAppHost>true</UseAppHost>
+    <Description>Out-of-process Hello module fixture for Runtime end-to-end tests.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Murchalka.Runtime.ModuleGateway/Murchalka.Runtime.ModuleGateway.csproj" />
+  </ItemGroup>
+</Project>

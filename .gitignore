@@ -1,0 +1,10 @@
+bin/
+obj/
+/packages/
+/artifacts/
+/TestResults/
+coverage/
+.idea/
+.DS_Store
+riderModule.iml
+/_ReSharper.Caches/

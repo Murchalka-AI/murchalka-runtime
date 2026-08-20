@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Non-disableable hash-chained Root audit.</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" /></ItemGroup>
+</Project>

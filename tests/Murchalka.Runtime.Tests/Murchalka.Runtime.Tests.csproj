@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <Description>Phase 1 unit, security and end-to-end tests.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Murchalka.Runtime.Bootstrap/Murchalka.Runtime.Bootstrap.csproj" />
+    <ProjectReference Include="../../src/Murchalka.Runtime.RootSecurity/Murchalka.Runtime.RootSecurity.csproj" />
+    <ProjectReference Include="../../src/Murchalka.Runtime.ModuleDiscovery/Murchalka.Runtime.ModuleDiscovery.csproj" />
+    <ProjectReference Include="../../src/Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.TestModule/Murchalka.Runtime.TestModule.csproj" ReferenceOutputAssembly="false" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="coverlet.collector"><PrivateAssets>all</PrivateAssets></PackageReference>
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio"><PrivateAssets>all</PrivateAssets></PackageReference>
+  </ItemGroup>
+</Project>

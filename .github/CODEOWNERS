@@ -1,0 +1,15 @@
+# Default ownership for the Runtime repository.
+* @schev4enko3
+
+# Build, dependency and release controls.
+/.github/workflows/ @schev4enko3
+/.github/dependabot.yml @schev4enko3
+/Directory.Build.props @schev4enko3
+/Directory.Packages.props @schev4enko3
+/NuGet.Config @schev4enko3
+/global.json @schev4enko3
+
+# Runtime contracts, manifests, permissions and root trust boundaries.
+/src/Murchalka.Runtime.Contracts/ @schev4enko3
+/src/Murchalka.Runtime.RootSecurity/ @schev4enko3
+/src/Murchalka.Runtime.ModuleStore/ @schev4enko3

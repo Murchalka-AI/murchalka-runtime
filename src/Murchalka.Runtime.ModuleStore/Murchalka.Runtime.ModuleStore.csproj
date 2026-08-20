@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Content-addressed immutable module bundle store and durable module state.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.RootSecurity/Murchalka.Runtime.RootSecurity.csproj" />
+  </ItemGroup>
+</Project>

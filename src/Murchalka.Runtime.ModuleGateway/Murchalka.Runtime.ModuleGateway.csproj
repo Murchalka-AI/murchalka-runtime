@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Authenticated local process Module Protocol gateway.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <PackageReference Include="Murchalka.ModuleProtocol.Json" />
+  </ItemGroup>
+</Project>

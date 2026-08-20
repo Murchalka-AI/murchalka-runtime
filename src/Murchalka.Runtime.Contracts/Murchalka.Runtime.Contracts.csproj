@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Product-neutral contracts shared inside the Murchalka Runtime.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Murchalka.ModuleProtocol.Contracts" />
+  </ItemGroup>
+</Project>

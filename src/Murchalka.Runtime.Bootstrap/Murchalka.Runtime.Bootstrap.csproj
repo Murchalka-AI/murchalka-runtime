@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Composition root for the product-neutral Runtime.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.Capabilities/Murchalka.Runtime.Capabilities.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.Kernel/Murchalka.Runtime.Kernel.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.ModuleStore/Murchalka.Runtime.ModuleStore.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.ModuleSupervisor/Murchalka.Runtime.ModuleSupervisor.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.RootSecurity/Murchalka.Runtime.RootSecurity.csproj" />
+  </ItemGroup>
+</Project>

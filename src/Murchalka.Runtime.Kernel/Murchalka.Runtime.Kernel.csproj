@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Phase 1 microkernel orchestration and durable lifecycle.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.ModuleDiscovery/Murchalka.Runtime.ModuleDiscovery.csproj" />
+  </ItemGroup>
+</Project>

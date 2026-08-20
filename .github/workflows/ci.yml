@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: true
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Authenticate to GitHub Packages
+        shell: bash
+        env:
+          PACKAGE_TOKEN: ${{ github.token }}
+        run: >-
+          dotnet nuget update source murchalka
+          --username "${GITHUB_ACTOR}"
+          --password "${PACKAGE_TOKEN}"
+          --store-password-in-clear-text
+          --configfile NuGet.Config
+
+      - name: Restore locked dependencies
+        run: dotnet restore Murchalka.Runtime.slnx --locked-mode --configfile NuGet.Config
+
+      - name: Verify formatting
+        if: runner.os == 'Linux'
+        run: dotnet format Murchalka.Runtime.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Build
+        run: dotnet build Murchalka.Runtime.slnx --configuration Release --no-restore
+
+      - name: Test with coverage
+        run: >-
+          dotnet test Murchalka.Runtime.slnx
+          --configuration Release
+          --no-build
+          --no-restore
+          --logger "trx;LogFileName=runtime-tests.trx"
+          --results-directory artifacts/test-results
+          --collect "XPlat Code Coverage"
+
+      - name: Upload test results and coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-test-results-${{ runner.os }}
+          path: artifacts/test-results
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-smoke:
+    name: Verify distributable Runtime
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Authenticate to GitHub Packages
+        shell: bash
+        env:
+          PACKAGE_TOKEN: ${{ github.token }}
+        run: >-
+          dotnet nuget update source murchalka
+          --username "${GITHUB_ACTOR}"
+          --password "${PACKAGE_TOKEN}"
+          --store-password-in-clear-text
+          --configfile NuGet.Config
+
+      - name: Restore locked dependencies
+        run: dotnet restore Murchalka.Runtime.slnx --locked-mode --configfile NuGet.Config
+
+      - name: Build
+        run: dotnet build Murchalka.Runtime.slnx --configuration Release --no-restore
+
+      - name: Publish portable Runtime
+        run: >-
+          dotnet publish src/Murchalka.Runtime.Host/Murchalka.Runtime.Host.csproj
+          --configuration Release
+          --no-build
+          --no-restore
+          --output artifacts/publish
+          -p:UseAppHost=false
+
+      - name: Smoke-test published Runtime
+        shell: bash
+        run: |
+          runtime_root="${RUNNER_TEMP}/murchalka-runtime"
+          dotnet artifacts/publish/Murchalka.Runtime.Host.dll \
+            --root "${runtime_root}" \
+            --url http://127.0.0.1:5078 &
+          runtime_pid=$!
+          trap 'kill "${runtime_pid}" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:5078/health | grep --quiet '"status":"ready"'; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Published Runtime did not become healthy." >&2
+          exit 1
+
+      - name: Upload portable Runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-portable
+          path: artifacts/publish
+          if-no-files-found: error
+          retention-days: 14

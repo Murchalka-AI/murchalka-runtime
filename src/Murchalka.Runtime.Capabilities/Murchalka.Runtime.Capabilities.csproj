@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Basic manifest-authoritative capability registry and routing.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <PackageReference Include="JsonSchema.Net" />
+  </ItemGroup>
+</Project>
