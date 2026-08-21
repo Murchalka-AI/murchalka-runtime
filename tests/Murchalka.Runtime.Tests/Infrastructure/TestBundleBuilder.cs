@@ -80,6 +80,7 @@ internal sealed class TestBundleBuilder : IDisposable
         files[contractPath] = contract;
         files["schemas/capabilities/hello.greet.request.schema.json"] = requestSchema;
         files["schemas/capabilities/hello.greet.response.schema.json"] = responseSchema;
+        files["schemas/events/greeting.completed.schema.json"] = responseSchema;
         files["sbom/test.spdx.json"] = Encoding.UTF8.GetBytes("{\"spdxVersion\":\"SPDX-2.3\",\"name\":\"hello-test\"}");
         files["provenance/build.json"] = Encoding.UTF8.GetBytes("{\"builder\":\"murchalka-runtime-tests\",\"reproducible\":true}");
 
@@ -132,6 +133,13 @@ internal sealed class TestBundleBuilder : IDisposable
             ["compatibility"] = new JsonObject { ["moduleSdk"] = ">=0.1.0 <1.0.0", ["runtime"] = ">=0.1.0 <0.2.0", ["moduleProtocol"] = "1" },
             ["artifacts"] = new JsonObject { ["runtime"] = new JsonArray(new JsonObject { ["id"] = "hello-process", ["mode"] = "process", ["os"] = new JsonArray(os), ["architectures"] = new JsonArray(architecture), ["entrypoint"] = artifactPath, ["digest"] = artifactDigest, ["protocolVersion"] = 1 }) },
             ["provides"] = new JsonObject { ["capabilities"] = new JsonArray(new JsonObject { ["id"] = "hello.greet", ["category"] = "examples.greeting", ["version"] = "1.0.0", ["contract"] = "schemas/capabilities/hello.greet.json", ["execution"] = new JsonObject { ["kind"] = "requestResponse", ["idempotency"] = "readOnly", ["timeout"] = "2s" } }) },
+            ["contributes"] = new JsonObject
+            {
+                ["events"] = new JsonObject
+                {
+                    ["publications"] = new JsonArray(new JsonObject { ["topic"] = "greeting.completed", ["schema"] = "schemas/events/greeting.completed.schema.json" })
+                }
+            },
             ["permissions"] = requestProcessSpawn ? new JsonObject { ["processes"] = new JsonObject { ["spawn"] = true } } : new JsonObject(),
             ["health"] = new JsonObject { ["startupTimeout"] = "10s", ["readiness"] = new JsonObject { ["interval"] = "1s", ["timeout"] = "2s", ["failureThreshold"] = 3 }, ["liveness"] = new JsonObject { ["interval"] = "30s", ["timeout"] = "2s", ["failureThreshold"] = 3 } },
             ["activation"] = new JsonObject { ["mode"] = "automaticWhenTrusted", ["failurePolicy"] = "keepInactive", ["hotReload"] = true, ["drainTimeout"] = "5s" }

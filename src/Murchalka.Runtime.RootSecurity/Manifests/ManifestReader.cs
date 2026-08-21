@@ -44,12 +44,20 @@ public static class ManifestReader
         var capabilityRequirements = ReadCapabilityRequirements(required?["capabilities"], isOptional: false);
         var optionalRequirements = ReadCapabilityRequirements(root["optional"]?["capabilities"], isOptional: true);
         var conflicts = ReadModuleRequirements(root["conflicts"]?["modules"]);
+        var contributions = root["contributes"]?.AsObject();
+        var pipelineContributions = ReadPipelineContributions(contributions?["pipelines"]);
+        var events = contributions?["events"]?.AsObject();
+        var eventPublications = ReadEventPublications(events?["publications"]);
+        var eventSubscriptions = ReadEventSubscriptions(events?["subscriptions"]);
+        var pipelineDefinitionPaths = ReadPipelineDefinitionPaths(root["extensions"]);
+        RejectContributionDuplicates(pipelineDefinitionPaths, pipelineContributions, eventPublications, eventSubscriptions);
         var readiness = RequiredObject(health, "readiness");
         var permissions = root["permissions"] ?? new JsonObject();
         return new ModuleManifest(
             new ModuleId(RequiredString(metadata, "id")), RequiredString(metadata, "name"), SemanticVersion.Parse(RequiredString(metadata, "version")),
             RequiredString(metadata, "publisher"), compatibility["runtime"]?.GetValue<string>() ?? "*", protocol,
             runtimeArtifacts, capabilities, moduleRequirements, capabilityRequirements, optionalRequirements, conflicts,
+            pipelineDefinitionPaths, pipelineContributions, eventPublications, eventSubscriptions,
             JsonSerializer.SerializeToElement(permissions),
             new HealthPolicy(ParseDuration(RequiredString(health, "startupTimeout")), ParseDuration(RequiredString(readiness, "timeout")), readiness["failureThreshold"]!.GetValue<int>()),
             new ActivationPolicy(RequiredString(activation, "mode"), RequiredString(activation, "failurePolicy"), activation["hotReload"]!.GetValue<bool>(), ParseDuration(RequiredString(activation, "drainTimeout"))),
@@ -107,6 +115,65 @@ public static class ManifestReader
         }).ToArray()
         : [];
 
+    private static PipelineContribution[] ReadPipelineContributions(JsonNode? node) => node is JsonArray array
+        ? array.Select(item =>
+        {
+            var value = item!.AsObject();
+            var order = value["order"]?.AsObject();
+            return new PipelineContribution(
+                RequiredString(value, "pipeline"),
+                RequiredString(value, "stage"),
+                RequiredString(value, "handler"),
+                ReadSet(order?["after"]),
+                ReadSet(order?["before"]),
+                ParsePipelineFailureMode(RequiredString(value, "failureMode")),
+                ParseDuration(RequiredString(value, "timeout")));
+        }).ToArray()
+        : [];
+
+    private static EventPublication[] ReadEventPublications(JsonNode? node) => node is JsonArray array
+        ? array.Select(item =>
+        {
+            var value = item!.AsObject();
+            return new EventPublication(RequiredString(value, "topic"), RequiredString(value, "schema"));
+        }).ToArray()
+        : [];
+
+    private static EventSubscription[] ReadEventSubscriptions(JsonNode? node) => node is JsonArray array
+        ? array.Select(item =>
+        {
+            var value = item!.AsObject();
+            return new EventSubscription(RequiredString(value, "topic"), RequiredString(value, "schema"), RequiredString(value, "handler"));
+        }).ToArray()
+        : [];
+
+    private static string[] ReadPipelineDefinitionPaths(JsonNode? node)
+    {
+        if (node is not JsonObject extensions ||
+            extensions["dev.murchalka.pipelines"] is not JsonObject pipelineExtension ||
+            pipelineExtension["definitions"] is not JsonArray definitions)
+            return [];
+        if (pipelineExtension.Any(pair => pair.Key != "definitions"))
+            throw new InvalidDataException("The dev.murchalka.pipelines extension contains an unsupported property.");
+        return definitions.Select(item => item?.GetValue<string>() ?? throw new InvalidDataException("Pipeline definition path cannot be null.")).ToArray();
+    }
+
+    private static void RejectContributionDuplicates(
+        IReadOnlyList<string> definitionPaths,
+        IReadOnlyList<PipelineContribution> pipelineContributions,
+        IReadOnlyList<EventPublication> eventPublications,
+        IReadOnlyList<EventSubscription> eventSubscriptions)
+    {
+        var definition = definitionPaths.GroupBy(value => value, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (definition is not null) throw new InvalidDataException($"Pipeline definition path '{definition.Key}' is duplicated.");
+        var pipeline = pipelineContributions.GroupBy(value => (value.PipelineId, value.StageId, value.HandlerId)).FirstOrDefault(group => group.Count() > 1);
+        if (pipeline is not null) throw new InvalidDataException($"Pipeline handler '{pipeline.Key.HandlerId}' is duplicated in '{pipeline.Key.PipelineId}/{pipeline.Key.StageId}'.");
+        var publication = eventPublications.GroupBy(value => value.Topic, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (publication is not null) throw new InvalidDataException($"Event publication '{publication.Key}' is duplicated.");
+        var subscription = eventSubscriptions.GroupBy(value => (value.Topic, value.HandlerId)).FirstOrDefault(group => group.Count() > 1);
+        if (subscription is not null) throw new InvalidDataException($"Event subscription '{subscription.Key.Topic}/{subscription.Key.HandlerId}' is duplicated.");
+    }
+
     private static BindingScopeType ParseScope(string value) => value switch
     {
         "global" => BindingScopeType.Global,
@@ -138,6 +205,14 @@ public static class ManifestReader
         "consumerPolicy" => RequirementSelectionMode.ConsumerPolicy,
         "scoped" => RequirementSelectionMode.Scoped,
         _ => throw new InvalidDataException($"Unknown requirement selection mode '{value}'.")
+    };
+
+    private static PipelineFailureMode ParsePipelineFailureMode(string value) => value switch
+    {
+        "fail" => PipelineFailureMode.Fail,
+        "continue" => PipelineFailureMode.Continue,
+        "fallback" => PipelineFailureMode.Fallback,
+        _ => throw new InvalidDataException($"Unknown pipeline failure mode '{value}'.")
     };
 
     internal static TimeSpan ParseDuration(string value)

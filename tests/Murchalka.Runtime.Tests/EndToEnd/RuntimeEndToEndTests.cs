@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Murchalka.ModuleProtocol.Contracts;
+using Murchalka.Runtime.Audit.Models;
 using Murchalka.Runtime.Audit.Services;
 using Murchalka.Runtime.Bootstrap.Composition;
 using Murchalka.Runtime.Bootstrap.Hosting;
@@ -72,6 +73,7 @@ public sealed class RuntimeEndToEndTests
 
         Assert.Equal(InvocationStatus.Succeeded, result.Status);
         Assert.Equal("Hello, Murchalka!", result.Payload!.Value.GetProperty("greeting").GetString());
+        await WaitForAuditEventAsync(paths, "event.published");
         var invalidInvocation = invocation with { InvocationId = Guid.NewGuid(), Payload = JsonSerializer.SerializeToElement(new { unsupported = true }) };
         await Assert.ThrowsAsync<InvalidDataException>(() => runtime.Kernel.Capabilities.InvokeAsync(invalidInvocation, CancellationToken.None));
         var disabled = await runtime.Kernel.DisableAsync(new ModuleId("dev.murchalka.hello-test"));
@@ -120,6 +122,18 @@ public sealed class RuntimeEndToEndTests
             if (status?.State == expected) return status;
             if (status?.State is ModuleLifecycleState.Failed or ModuleLifecycleState.Quarantined)
                 throw new Xunit.Sdk.XunitException($"Module reached {status.State}: {status.ReasonCode}.");
+            await Task.Delay(25, timeout.Token);
+        }
+    }
+
+    private static async Task WaitForAuditEventAsync(RuntimePaths paths, string eventType)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var path = Path.Combine(paths.Audit, "root-audit.jsonl");
+        while (true)
+        {
+            timeout.Token.ThrowIfCancellationRequested();
+            if (File.Exists(path) && File.ReadLines(path).Select(line => JsonSerializer.Deserialize<RootAuditRecord>(line)).Any(value => value?.EventType == eventType)) return;
             await Task.Delay(25, timeout.Token);
         }
     }

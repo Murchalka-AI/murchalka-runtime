@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Channels;
 using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.Runtime.Contracts.Abstractions;
 using Murchalka.Runtime.ModuleGateway.Protocol;
@@ -9,7 +10,14 @@ namespace Murchalka.Runtime.ModuleGateway.Sessions;
 public sealed class ModuleGatewaySession : IModuleGatewaySession
 {
     private readonly Stream _stream;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _exchangeGate = new(1, 1);
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly Channel<GatewayFrame> _responses = Channel.CreateBounded<GatewayFrame>(new BoundedChannelOptions(128) { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
+    private readonly Channel<GatewayFrame> _publications = Channel.CreateBounded<GatewayFrame>(new BoundedChannelOptions(128) { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly Task _reader;
+    private readonly Task _publicationReader;
+    private Func<EventEnvelope, CancellationToken, Task<EventEnvelope>>? _eventPublisher;
     private bool _disposed;
 
     internal ModuleGatewaySession(Stream stream, ModuleHello hello, ModuleReady ready)
@@ -17,6 +25,8 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
         _stream = stream;
         Hello = hello;
         Ready = ready;
+        _reader = ReadLoopAsync(_shutdown.Token);
+        _publicationReader = ReadPublicationsAsync(_shutdown.Token);
     }
 
     /// <summary>Gets the module hello message validated during the handshake.</summary>
@@ -49,6 +59,14 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
         return SendControlAsync(new ControlMessage(Guid.NewGuid().ToString("N"), ControlMessageKind.UpdateBindings, DateTimeOffset.UtcNow.Add(timeout), data), cancellationToken);
     }
 
+    /// <inheritdoc />
+    public void SetEventPublisher(Func<EventEnvelope, CancellationToken, Task<EventEnvelope>> publisher)
+    {
+        ArgumentNullException.ThrowIfNull(publisher);
+        if (Interlocked.CompareExchange(ref _eventPublisher, publisher, null) is not null)
+            throw new InvalidOperationException("An event publisher is already registered for this session.");
+    }
+
     private async Task<ControlResult> SendControlAsync(ControlMessage operation, CancellationToken cancellationToken)
     {
         var frame = await ExchangeAsync("control", operation, "controlResult", cancellationToken).ConfigureAwait(false);
@@ -71,15 +89,92 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     private async Task<GatewayFrame> ExchangeAsync<T>(string requestKind, T request, string responseKind, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _exchangeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await GatewayFrameCodec.WriteAsync(_stream, requestKind, request, cancellationToken).ConfigureAwait(false);
-            var frame = await GatewayFrameCodec.ReadAsync(_stream, cancellationToken).ConfigureAwait(false);
+            await WriteAsync(requestKind, request, cancellationToken).ConfigureAwait(false);
+            var frame = await _responses.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
             if (!string.Equals(frame.Kind, responseKind, StringComparison.Ordinal)) throw new InvalidDataException($"Expected protocol frame '{responseKind}', received '{frame.Kind}'.");
             return frame;
         }
-        finally { _gate.Release(); }
+        finally { _exchangeGate.Release(); }
+    }
+
+    private async Task ReadLoopAsync(CancellationToken cancellationToken)
+    {
+        Exception? failure = null;
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var frame = await GatewayFrameCodec.ReadAsync(_stream, cancellationToken).ConfigureAwait(false);
+                if (string.Equals(frame.Kind, "eventPublication", StringComparison.Ordinal))
+                {
+                    await _publications.Writer.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                await _responses.Writer.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception exception) { failure = exception; }
+        finally
+        {
+            _responses.Writer.TryComplete(failure);
+            _publications.Writer.TryComplete(failure);
+        }
+    }
+
+    private async Task ReadPublicationsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var frame in _publications.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                try { await HandleEventPublicationAsync(frame, cancellationToken).ConfigureAwait(false); }
+                catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    var rejected = new ControlResult("unknown", false, "event-frame-invalid", exception.Message, null);
+                    await WriteAsync("eventPublicationResult", rejected, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private async Task HandleEventPublicationAsync(GatewayFrame frame, CancellationToken cancellationToken)
+    {
+        var envelope = GatewayFrameCodec.PayloadAs<EventEnvelope>(frame);
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ControlResult result;
+            if (envelope.ProducerModule != Hello.ModuleId || envelope.ProducerInstance != Hello.InstanceId)
+                result = new ControlResult(envelope.EventId.ToString("D"), false, "event-producer-identity-mismatch", "Event producer identity does not match the authenticated session.", null);
+            else if (_eventPublisher is null)
+                result = new ControlResult(envelope.EventId.ToString("D"), false, "event-publisher-unavailable", "Event publication is not available before activation.", null);
+            else
+            {
+                try
+                {
+                    var published = await _eventPublisher(envelope, cancellationToken).ConfigureAwait(false);
+                    result = new ControlResult(envelope.EventId.ToString("D"), true, null, null, JsonSerializer.SerializeToElement(published));
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    result = new ControlResult(envelope.EventId.ToString("D"), false, "event-publication-rejected", exception.Message, null);
+                }
+            }
+            await GatewayFrameCodec.WriteAsync(_stream, "eventPublicationResult", result, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    private async Task WriteAsync<T>(string kind, T value, CancellationToken cancellationToken)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await GatewayFrameCodec.WriteAsync(_stream, kind, value, cancellationToken).ConfigureAwait(false); }
+        finally { _writeGate.Release(); }
     }
 
     private static ControlMessage CreateControl(ControlMessageKind kind, TimeSpan timeout)
@@ -93,7 +188,14 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     {
         if (_disposed) return;
         _disposed = true;
+        await _shutdown.CancelAsync().ConfigureAwait(false);
         await _stream.DisposeAsync().ConfigureAwait(false);
-        _gate.Dispose();
+        try { await _reader.ConfigureAwait(false); }
+        catch (Exception) when (_shutdown.IsCancellationRequested) { }
+        try { await _publicationReader.ConfigureAwait(false); }
+        catch (Exception) when (_shutdown.IsCancellationRequested) { }
+        _exchangeGate.Dispose();
+        _writeGate.Dispose();
+        _shutdown.Dispose();
     }
 }

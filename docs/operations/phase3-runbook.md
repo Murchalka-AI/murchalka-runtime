@@ -1,0 +1,12 @@
+# Phase 3 operations runbook
+
+- **Pipeline unavailable / pending-binding:** inspect the definition owner and stage id, then create a global binding whose consumer is the definition owner, requirement is the stage id, provider module is the selected contributor, provider capability is the pipeline id, and instance is the contributor's stable logical instance.
+- **Pipeline ordering conflict:** inspect `pipeline-order-cycle` diagnostics and remove a contradictory `before` or `after` constraint. Runtime retains the prior graph snapshot and does not partially attach the rejected contributor.
+- **Pipeline schema failure:** compare the invocation or handler result with the immutable definition input/output schema. Do not weaken the schema in deployment configuration; publish a compatible module version.
+- **Contributor disable or crash:** the Runtime removes the contribution before stopping the process and atomically publishes a new graph revision. Pipelines with optional sequential contributions remain executable; required exactly-one and first-successful stages become unavailable when no valid handler remains.
+- **Event outbox backlog:** inspect module health and active subscriptions. Pending deliveries remain under `events/outbox`; a disabled handler does not consume retry attempts and resumes under the same module/handler identity after re-enable.
+- **Event delivery retries:** transient handler failures back off exponentially and are attempted at most five times. Later events in the same partition do not overtake an earlier pending event.
+- **Event quarantine:** inspect metadata through the Event Fabric API or files under `events/quarantine`. Schema mismatch, permission denial, and exhausted delivery attempts are quarantined per recipient. Correct the module/schema/grant, then replay the quarantine id explicitly.
+- **Event permission denial:** public events require a granted module. Non-public publication requires `data.write`; subscription requires `data.read`. Use the exact topic, `event:{topic}`, `event:*`, classification, or `*`, and install a separately signed grant covering the manifest request.
+- **Recovery:** Runtime restart reloads outbox records and inbox receipts before delivery. Never delete inbox receipts unless deliberate duplicate processing is acceptable.
+- **Cross-store atomicity:** until Phase 4, producers must persist a stable event id with their domain change and retry the Runtime append. The Runtime does not claim atomicity with arbitrary module-owned storage.

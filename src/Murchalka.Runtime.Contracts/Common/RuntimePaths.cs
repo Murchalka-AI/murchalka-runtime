@@ -49,11 +49,19 @@ public sealed record RuntimePaths
     public string Bindings => Path.Combine(Configuration, "murchalka.bindings.yaml");
     /// <summary>Gets the generated composition lock directory.</summary>
     public string Locks => Path.Combine(Modules, "locks");
+    /// <summary>Gets the durable local event fabric root.</summary>
+    public string Events => Path.Combine(Root, "events");
+    /// <summary>Gets the durable event outbox directory.</summary>
+    public string EventOutbox => Path.Combine(Events, "outbox");
+    /// <summary>Gets the durable event inbox receipt directory.</summary>
+    public string EventInbox => Path.Combine(Events, "inbox");
+    /// <summary>Gets the event delivery quarantine directory.</summary>
+    public string EventQuarantine => Path.Combine(Events, "quarantine");
 
     /// <summary>Creates every required Runtime directory when it is absent.</summary>
     public void EnsureCreated()
     {
-        foreach (var path in new[] { Configuration, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, Sockets, ModuleData, Audit, Grants, Locks })
+        foreach (var path in new[] { Configuration, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, Sockets, ModuleData, Audit, Grants, Locks, EventOutbox, EventInbox, EventQuarantine })
             Directory.CreateDirectory(path);
     }
 }

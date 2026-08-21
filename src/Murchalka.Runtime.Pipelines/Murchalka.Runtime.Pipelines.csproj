@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Immutable dynamic pipeline graph composition and execution.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Murchalka.ModuleProtocol.Json" />
+  </ItemGroup>
+</Project>

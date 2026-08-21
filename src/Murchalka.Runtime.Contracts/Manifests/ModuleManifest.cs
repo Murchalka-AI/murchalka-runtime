@@ -16,6 +16,10 @@ namespace Murchalka.Runtime.Contracts.Manifests;
 /// <param name="CapabilityRequirements">The required capability or category dependencies.</param>
 /// <param name="OptionalCapabilityRequirements">The optional capability or category dependencies.</param>
 /// <param name="ConflictingModules">The module conflicts declared by this module.</param>
+/// <param name="PipelineDefinitionPaths">The explicitly declared pipeline definition documents.</param>
+/// <param name="PipelineContributions">The pipeline handlers contributed by the module.</param>
+/// <param name="EventPublications">The events the module is allowed to publish.</param>
+/// <param name="EventSubscriptions">The event handlers contributed by the module.</param>
 /// <param name="RequestedPermissions">The manifest permission request.</param>
 /// <param name="Health">The health policy.</param>
 /// <param name="Activation">The activation policy.</param>
@@ -33,6 +37,10 @@ public sealed record ModuleManifest(
     IReadOnlyList<CapabilityRequirement> CapabilityRequirements,
     IReadOnlyList<CapabilityRequirement> OptionalCapabilityRequirements,
     IReadOnlyList<ModuleRequirement> ConflictingModules,
+    IReadOnlyList<string> PipelineDefinitionPaths,
+    IReadOnlyList<PipelineContribution> PipelineContributions,
+    IReadOnlyList<EventPublication> EventPublications,
+    IReadOnlyList<EventSubscription> EventSubscriptions,
     JsonElement RequestedPermissions,
     HealthPolicy Health,
     ActivationPolicy Activation,

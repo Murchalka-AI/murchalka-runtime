@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Durable schema-validated local event outbox, inbox, delivery, and replay.</Description></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Murchalka.ModuleProtocol.Json" />
+  </ItemGroup>
+</Project>

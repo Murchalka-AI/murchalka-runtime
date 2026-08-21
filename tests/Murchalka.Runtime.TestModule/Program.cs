@@ -69,6 +69,27 @@ while (running)
                 if (!active) throw new InvalidOperationException("Invocation arrived before activation.");
                 var name = invocation.Payload?.GetProperty("name").GetString() ?? "world";
                 var payload = JsonSerializer.SerializeToElement(new { greeting = $"Hello, {name}!" });
+                var @event = new EventEnvelope(
+                    Guid.NewGuid(),
+                    "greeting.completed",
+                    1,
+                    moduleId,
+                    instanceId,
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.MinValue,
+                    invocation.Scope.TenantId,
+                    invocation.ActorReference,
+                    invocation.CorrelationId,
+                    invocation.InvocationId.ToString("D"),
+                    invocation.Scope.PersonId ?? "global",
+                    DataClassification.Public,
+                    invocation.Purpose,
+                    "sha256:" + new string('0', 64),
+                    payload);
+                await GatewayFrameCodec.WriteAsync(stream, "eventPublication", @event, CancellationToken.None);
+                var publicationFrame = await GatewayFrameCodec.ReadAsync(stream, CancellationToken.None);
+                var publication = GatewayFrameCodec.PayloadAs<ControlResult>(publicationFrame);
+                if (!publication.Succeeded) throw new InvalidOperationException($"Event publication failed: {publication.ErrorCode}.");
                 var result = new ResultEnvelope(invocation.InvocationId, InvocationStatus.Succeeded, payload, null, null, [], [], "hello-receipt");
                 await GatewayFrameCodec.WriteAsync(stream, "result", result, CancellationToken.None);
                 break;

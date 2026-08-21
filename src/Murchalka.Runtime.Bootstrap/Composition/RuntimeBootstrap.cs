@@ -5,10 +5,14 @@ using Murchalka.Runtime.Capabilities.Registry;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Dependencies.Locks;
 using Murchalka.Runtime.Dependencies.Resolution;
+using Murchalka.Runtime.Events.Delivery;
+using Murchalka.Runtime.Events.Fabric;
 using Murchalka.Runtime.Kernel.Services;
 using Murchalka.Runtime.ModuleDiscovery.Watchers;
 using Murchalka.Runtime.ModuleStore.Services;
 using Murchalka.Runtime.ModuleSupervisor.Services;
+using Murchalka.Runtime.Pipelines.Execution;
+using Murchalka.Runtime.Pipelines.Registry;
 using Murchalka.Runtime.RootSecurity.Bundles;
 using Murchalka.Runtime.RootSecurity.Permissions;
 using Murchalka.Runtime.RootSecurity.Trust;
@@ -39,8 +43,10 @@ public static class RuntimeBootstrap
         var bindings = new FileBindingStore(paths, "local");
         var resolver = new DependencyResolver();
         var locks = new CompositionLockStore(paths, clock);
+        var pipelines = new DynamicPipelineRuntime(new ModulePipelineHandlerInvoker(supervisor), audit, clock);
+        var events = new DurableEventFabric(paths, new ModuleEventDeliverySink(supervisor), audit, clock);
         var watcher = new ModuleDirectoryWatcher(paths, clock, discoveryPollInterval);
-        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, resolver, locks, audit, clock);
+        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, resolver, locks, pipelines, events, audit, clock);
         return new RuntimeApplication(paths, kernel, supervisor, store, state, bindings, audit);
     }
 }

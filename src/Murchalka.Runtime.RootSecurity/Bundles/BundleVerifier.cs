@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Json.Schema;
 using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.ModuleProtocol.Json;
 using Murchalka.Runtime.Contracts.Abstractions;
@@ -67,6 +68,7 @@ public sealed class BundleVerifier : IBundleVerifier
             var lockReport = _schemas.ValidateJson("module-lock.schema.json", lockNode);
             if (!lockReport.IsValid) throw Failure(BundleVerificationFailureKind.InvalidLock, "lock-schema-invalid", string.Join("; ", lockReport.Violations.Select(v => $"{v.InstanceLocation}:{v.Message}")));
             VerifyLock(lockNode, manifest, bundleDigest, entries);
+            await VerifyContributionDocumentsAsync(manifest, entries, cancellationToken).ConfigureAwait(false);
             VerifyArtifacts(manifest, entries);
             VerifySupplyChainEntries(entries);
             var identity = new BundleIdentity(bundleDigest, signature.Publisher, signature.KeyId);
@@ -205,6 +207,69 @@ public sealed class BundleVerifier : IBundleVerifier
             var bytes = ReadEntryAsync(Required(entries, artifact.EntryPoint), CancellationToken.None).GetAwaiter().GetResult();
             if (!FixedEquals(CanonicalBundleContent.Sha256(bytes), artifact.Digest)) throw Failure(BundleVerificationFailureKind.ArtifactMismatch, "artifact-digest-mismatch", $"Artifact digest mismatch for '{artifact.Id}'.");
         }
+    }
+
+    private static async Task VerifyContributionDocumentsAsync(ModuleManifest manifest, IReadOnlyDictionary<string, ZipArchiveEntry> entries, CancellationToken cancellationToken)
+    {
+        foreach (var path in manifest.EventPublications.Select(value => value.SchemaPath)
+                     .Concat(manifest.EventSubscriptions.Select(value => value.SchemaPath))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var schema = await ReadEntryAsync(Required(entries, path), cancellationToken).ConfigureAwait(false);
+            _ = JsonSchema.FromText(System.Text.Encoding.UTF8.GetString(schema));
+        }
+        foreach (var path in manifest.PipelineDefinitionPaths.Distinct(StringComparer.Ordinal))
+        {
+            var extension = Path.GetExtension(path);
+            if (extension is not (".json" or ".yaml" or ".yml"))
+                throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-extension-invalid", $"Pipeline definition '{path}' must be JSON or YAML.");
+            var definition = await ParseStructuredEntryAsync(Required(entries, path), extension, cancellationToken).ConfigureAwait(false);
+            await VerifyPipelineDefinitionAsync(path, definition, entries, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task VerifyPipelineDefinitionAsync(string path, JsonNode document, IReadOnlyDictionary<string, ZipArchiveEntry> entries, CancellationToken cancellationToken)
+    {
+        var root = document.AsObject();
+        if (root["apiVersion"]?.GetValue<string>() != "pipelines.murchalka.dev/v1" || root["kind"]?.GetValue<string>() != "PipelineDefinition")
+            throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has an unsupported kind or API version.");
+        var metadata = root["metadata"]?.AsObject() ?? throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has no metadata.");
+        try { _ = new CapabilityId(metadata["id"]?.GetValue<string>() ?? string.Empty); }
+        catch (ArgumentException) { throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has an invalid id."); }
+        if (metadata["version"]?.GetValue<int>() is not > 0)
+            throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has an invalid version.");
+        if (root["stages"] is not JsonArray { Count: > 0 } stages)
+            throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has no stages.");
+        var stageIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var stageNode in stages)
+        {
+            var stage = stageNode?.AsObject() ?? throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' contains an invalid stage.");
+            var id = stage["id"]?.GetValue<string>() ?? string.Empty;
+            var mode = stage["mode"]?.GetValue<string>();
+            if (!stageIds.Add(id) || mode is not ("sequential" or "parallelMerge" or "firstSuccessful" or "exactlyOne" or "fanOut" or "reduce"))
+                throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' contains a duplicate stage or unsupported mode.");
+        }
+        foreach (var section in new[] { "input", "output" })
+        {
+            var schema = root[section]?.AsObject()?["schema"]?.GetValue<string>()
+                ?? throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has no {section} schema.");
+            var schemaPath = ResolveBundleRelative(path, schema);
+            var bytes = await ReadEntryAsync(Required(entries, schemaPath), cancellationToken).ConfigureAwait(false);
+            _ = JsonSchema.FromText(System.Text.Encoding.UTF8.GetString(bytes));
+        }
+        var semantics = root["semantics"]?.AsObject() ?? throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has no semantics.");
+        if (semantics["deadline"]?.GetValue<string>() is not { Length: > 1 } ||
+            semantics["cancellation"]?.GetValue<string>() is not ("required" or "optional") ||
+            semantics["checkpointing"]?.GetValue<string>() is not ("required" or "optional" or "disabled"))
+            throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has invalid execution semantics.");
+    }
+
+    private static string ResolveBundleRelative(string ownerPath, string relativePath)
+    {
+        if (relativePath.StartsWith('/') || relativePath.Split('/').Any(segment => segment is "" or "." or ".."))
+            throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-schema-path-invalid", $"Pipeline schema path '{relativePath}' is unsafe.");
+        var directory = Path.GetDirectoryName(ownerPath)?.Replace('\\', '/');
+        return string.IsNullOrEmpty(directory) ? relativePath : directory + "/" + relativePath;
     }
 
     private static void VerifySupplyChainEntries(IReadOnlyDictionary<string, ZipArchiveEntry> entries)

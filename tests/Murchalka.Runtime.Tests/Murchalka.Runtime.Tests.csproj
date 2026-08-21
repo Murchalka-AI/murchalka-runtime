@@ -10,6 +10,8 @@
     <ProjectReference Include="../../src/Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />
     <ProjectReference Include="../../src/Murchalka.Runtime.Dependencies/Murchalka.Runtime.Dependencies.csproj" />
     <ProjectReference Include="../../src/Murchalka.Runtime.Bindings/Murchalka.Runtime.Bindings.csproj" />
+    <ProjectReference Include="../../src/Murchalka.Runtime.Events/Murchalka.Runtime.Events.csproj" />
+    <ProjectReference Include="../../src/Murchalka.Runtime.Pipelines/Murchalka.Runtime.Pipelines.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.TestModule/Murchalka.Runtime.TestModule.csproj" ReferenceOutputAssembly="false" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="coverlet.collector"><PrivateAssets>all</PrivateAssets></PackageReference>

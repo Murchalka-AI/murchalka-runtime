@@ -58,6 +58,14 @@
           "Murchalka.Runtime.Contracts": "[0.1.0, )"
         }
       },
+      "murchalka.runtime.events": {
+        "type": "Project",
+        "dependencies": {
+          "JsonSchema.Net": "[9.4.0, )",
+          "Murchalka.ModuleProtocol.Json": "[0.1.12, )",
+          "Murchalka.Runtime.Contracts": "[0.1.0, )"
+        }
+      },
       "murchalka.runtime.kernel": {
         "type": "Project",
         "dependencies": {
@@ -93,9 +101,18 @@
           "Murchalka.Runtime.ModuleGateway": "[0.1.0, )"
         }
       },
+      "murchalka.runtime.pipelines": {
+        "type": "Project",
+        "dependencies": {
+          "JsonSchema.Net": "[9.4.0, )",
+          "Murchalka.ModuleProtocol.Json": "[0.1.12, )",
+          "Murchalka.Runtime.Contracts": "[0.1.0, )"
+        }
+      },
       "murchalka.runtime.rootsecurity": {
         "type": "Project",
         "dependencies": {
+          "JsonSchema.Net": "[9.4.0, )",
           "Murchalka.ModuleProtocol.Json": "[0.1.12, )",
           "Murchalka.Runtime.Contracts": "[0.1.0, )"
         }

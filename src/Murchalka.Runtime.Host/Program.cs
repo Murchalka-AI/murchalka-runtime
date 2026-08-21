@@ -28,6 +28,32 @@ app.MapGet("/v1/capabilities", () => Results.Ok(runtime.Kernel.Capabilities.Snap
     instance = value.InstanceId.Value,
     category = value.Category
 })));
+app.MapGet("/v1/pipelines", () =>
+{
+    var snapshot = runtime.Kernel.Pipelines.Snapshot();
+    return Results.Ok(new
+    {
+        snapshot.Revision,
+        pipelines = snapshot.Pipelines.Select(pipeline => new
+        {
+            id = pipeline.Definition.Id,
+            version = pipeline.Definition.Version,
+            owner = pipeline.Definition.OwnerModule.Value,
+            executable = pipeline.IsExecutable,
+            stages = pipeline.Stages.Select(stage => new
+            {
+                id = stage.Definition.Id,
+                mode = stage.Definition.Mode.ToString(),
+                issue = stage.Issue,
+                handlers = stage.Handlers.Select(handler => new { id = handler.HandlerId, module = handler.ModuleId.Value, instance = handler.InstanceId.Value })
+            })
+        })
+    });
+});
+app.MapGet("/v1/events/quarantine", async (CancellationToken cancellationToken) =>
+    Results.Ok(await runtime.Kernel.Events.GetQuarantineAsync(cancellationToken)));
+app.MapPost("/v1/events/quarantine/{quarantineId}/replay", async (string quarantineId, CancellationToken cancellationToken) =>
+    await runtime.Kernel.Events.ReplayAsync(quarantineId, cancellationToken) ? Results.Accepted() : Results.NotFound());
 app.MapGet("/v1/bindings", async (CancellationToken cancellationToken) =>
     Results.Ok(BindingDocumentJson.Serialize(await runtime.Kernel.GetBindingsAsync(cancellationToken))));
 app.MapPut("/v1/bindings", async (HttpRequest request, long expectedRevision, CancellationToken cancellationToken) =>

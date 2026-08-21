@@ -216,7 +216,8 @@ public sealed class DependencyResolverPropertyTests
         IReadOnlyList<ModuleRequirement>? conflicts = null,
         JsonElement? permissions = null) => new(
             new ModuleId(id), id, SemanticVersion.Parse(version), "dev.murchalka.tests", "*", 1, [], capabilities ?? [],
-            moduleRequirements ?? [], capabilityRequirements ?? [], optionalRequirements ?? [], conflicts ?? [], permissions ?? JsonSerializer.SerializeToElement(new { }),
+            moduleRequirements ?? [], capabilityRequirements ?? [], optionalRequirements ?? [], conflicts ?? [], [], [], [], [],
+            permissions ?? JsonSerializer.SerializeToElement(new { }),
             new HealthPolicy(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1), 1),
             new ActivationPolicy("automaticWhenTrusted", "keepInactive", true, TimeSpan.FromSeconds(1)), JsonSerializer.SerializeToElement(new { }));
 

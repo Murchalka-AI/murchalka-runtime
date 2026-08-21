@@ -2,6 +2,7 @@
   <PropertyGroup><Description>Root Trust bundle, publisher, compatibility and permission enforcement.</Description></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
+    <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Murchalka.ModuleProtocol.Json" />
   </ItemGroup>
 </Project>

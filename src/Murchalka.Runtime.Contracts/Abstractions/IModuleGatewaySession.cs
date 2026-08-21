@@ -34,6 +34,10 @@ public interface IModuleGatewaySession : IAsyncDisposable
     /// <returns>The module control result.</returns>
     Task<ControlResult> UpdateDependenciesAsync(DependencyEndpointsSnapshot snapshot, TimeSpan timeout, CancellationToken cancellationToken);
 
+    /// <summary>Registers the Runtime-owned handler for authenticated event publication frames.</summary>
+    /// <param name="publisher">The durable event publisher.</param>
+    void SetEventPublisher(Func<EventEnvelope, CancellationToken, Task<EventEnvelope>> publisher);
+
     /// <summary>Sends a capability invocation to the module.</summary>
     /// <param name="invocation">The invocation envelope.</param>
     /// <param name="cancellationToken">Cancels the invocation.</param>
