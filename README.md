@@ -58,6 +58,8 @@ git push origin v0.1.0
 ## Run
 
 ```sh
+mkdir -p ./var/configuration
+cp configuration/trusted-publishers.json ./var/configuration/trusted-publishers.json
 dotnet run --project src/Murchalka.Runtime.Host -- --root ./var
 ```
 

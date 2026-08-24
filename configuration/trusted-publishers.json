@@ -1,0 +1,13 @@
+{
+  "publishers": {
+    "dev.murchalka": {
+      "keys": {
+        "dev-murchalka-release-2026-01": {
+          "algorithm": "ecdsa-p256-sha256",
+          "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE3CR47nUiJ6dCHVWF/IdyvcIhpF+i\nUpVy1knhFleXfqS03IEoEKLD34JLupNHnqRu5pMhG8LWwZshh1fGFIvHBA==\n-----END PUBLIC KEY-----\n"
+        }
+      }
+    }
+  },
+  "grantAuthorities": {}
+}
