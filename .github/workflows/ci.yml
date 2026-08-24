@@ -71,9 +71,11 @@ jobs:
           --configuration Release
           --no-build
           --no-restore
-          --logger "trx;LogFileName=runtime-tests.trx"
           --results-directory artifacts/test-results
-          --collect "XPlat Code Coverage"
+          --report-trx
+          --report-trx-filename runtime-tests.trx
+          --coverage
+          --coverage-output-format cobertura
 
       - name: Upload test results and coverage
         if: always()

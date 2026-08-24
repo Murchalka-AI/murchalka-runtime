@@ -19,7 +19,8 @@
     <ProjectReference Include="../../src/Murchalka.Runtime.Secrets/Murchalka.Runtime.Secrets.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.TestModule/Murchalka.Runtime.TestModule.csproj" ReferenceOutputAssembly="false" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="coverlet.collector"><PrivateAssets>all</PrivateAssets></PackageReference>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" PrivateAssets="all" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>

@@ -6,8 +6,9 @@
     <PackageVersion Include="Murchalka.ModuleProtocol.Contracts" Version="0.2.0" />
     <PackageVersion Include="Murchalka.ModuleProtocol.Json" Version="0.2.0" />
     <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
-    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.10.0" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="2.3.3" />
     <PackageVersion Include="xunit.v3" Version="4.0.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
   </ItemGroup>
