@@ -24,17 +24,19 @@ public sealed class RuntimeEndToEndTests
         var bundle = bundleBuilder.Build(Path.Combine(directory.Path, "bundle"));
         await using (var first = RuntimeBootstrap.Create(paths.Root, discoveryPollInterval: TimeSpan.FromMilliseconds(20)))
         {
-            await first.Kernel.StartAsync();
+            await first.Kernel.StartAsync(TestContext.Current.CancellationToken);
             File.Copy(bundle.Path, Path.Combine(paths.Inbox, "hello.murchalka"));
             await WaitForStateAsync(first, ModuleLifecycleState.Active);
         }
 
         await using var second = RuntimeBootstrap.Create(paths.Root, discoveryPollInterval: TimeSpan.FromMilliseconds(20));
-        await second.Kernel.StartAsync();
+        await second.Kernel.StartAsync(TestContext.Current.CancellationToken);
         var recovered = await WaitForStateAsync(second, ModuleLifecycleState.Active);
         Assert.NotNull(recovered.InstanceId);
         Assert.Single(second.Kernel.Capabilities.Snapshot());
-        await second.Kernel.DisableAsync(new ModuleId("dev.murchalka.hello-test"));
+        await second.Kernel.DisableAsync(
+            new ModuleId("dev.murchalka.hello-test"),
+            TestContext.Current.CancellationToken);
     }
 
     /// <summary>Verifies bundle discovery, activation, invocation, and graceful disablement.</summary>
@@ -48,7 +50,7 @@ public sealed class RuntimeEndToEndTests
         bundleBuilder.WriteTrust(paths);
         var bundle = bundleBuilder.Build(Path.Combine(directory.Path, "bundle"));
         await using var runtime = RuntimeBootstrap.Create(runtimeRoot, discoveryPollInterval: TimeSpan.FromMilliseconds(20));
-        await runtime.Kernel.StartAsync();
+        await runtime.Kernel.StartAsync(TestContext.Current.CancellationToken);
 
         var partial = Path.Combine(paths.Inbox, "hello.murchalka.partial");
         File.Copy(bundle.Path, partial);
@@ -58,7 +60,8 @@ public sealed class RuntimeEndToEndTests
         Assert.Equal(active.InstanceId, provider.InstanceId.Value);
         var generatedLock = Path.Combine(paths.Locks, "dev.murchalka.hello-test.lock.json");
         Assert.True(File.Exists(generatedLock));
-        using (var lockDocument = JsonDocument.Parse(await File.ReadAllTextAsync(generatedLock)))
+        using (var lockDocument = JsonDocument.Parse(
+            await File.ReadAllTextAsync(generatedLock, TestContext.Current.CancellationToken)))
         {
             Assert.Equal(active.BundleDigest, lockDocument.RootElement.GetProperty("module").GetProperty("bundleDigest").GetString());
             Assert.Empty(lockDocument.RootElement.GetProperty("dependencies").EnumerateArray());
@@ -69,22 +72,28 @@ public sealed class RuntimeEndToEndTests
             new ModuleId("dev.murchalka.test-consumer"), null, new InvocationScope(null, null, null, null, null, null), "greeting", "root-test",
             Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow.AddSeconds(5), null,
             "schemas/capabilities/hello.greet.request.schema.json", payload, null);
-        var result = await runtime.Kernel.Capabilities.InvokeAsync(invocation, CancellationToken.None);
+        var result = await runtime.Kernel.Capabilities.InvokeAsync(invocation, TestContext.Current.CancellationToken);
 
         Assert.Equal(InvocationStatus.Succeeded, result.Status);
         Assert.Equal("Hello, Murchalka!", result.Payload!.Value.GetProperty("greeting").GetString());
         await WaitForAuditEventAsync(paths, "event.published");
         var invalidInvocation = invocation with { InvocationId = Guid.NewGuid(), Payload = JsonSerializer.SerializeToElement(new { unsupported = true }) };
-        await Assert.ThrowsAsync<InvalidDataException>(() => runtime.Kernel.Capabilities.InvokeAsync(invalidInvocation, CancellationToken.None));
-        var disabled = await runtime.Kernel.DisableAsync(new ModuleId("dev.murchalka.hello-test"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => runtime.Kernel.Capabilities.InvokeAsync(invalidInvocation, TestContext.Current.CancellationToken));
+        var disabled = await runtime.Kernel.DisableAsync(
+            new ModuleId("dev.murchalka.hello-test"),
+            TestContext.Current.CancellationToken);
         Assert.NotNull(disabled);
         Assert.Equal(ModuleLifecycleState.Disabled, disabled.State);
         Assert.Empty(runtime.Kernel.Capabilities.Snapshot());
-        var reenabled = await runtime.Kernel.EnableAsync(new ModuleId("dev.murchalka.hello-test"));
+        var reenabled = await runtime.Kernel.EnableAsync(
+            new ModuleId("dev.murchalka.hello-test"),
+            TestContext.Current.CancellationToken);
         Assert.NotNull(reenabled);
         Assert.Equal(ModuleLifecycleState.Active, reenabled.State);
         Assert.Single(runtime.Kernel.Capabilities.Snapshot());
-        await runtime.Kernel.DisableAsync(new ModuleId("dev.murchalka.hello-test"));
+        await runtime.Kernel.DisableAsync(
+            new ModuleId("dev.murchalka.hello-test"),
+            TestContext.Current.CancellationToken);
         Assert.Empty(HashChainedRootAudit.Verify(Path.Combine(paths.Audit, "root-audit.jsonl")));
     }
 
@@ -103,7 +112,7 @@ public sealed class RuntimeEndToEndTests
         bundleBuilder.WriteTrust(paths);
         var bundle = bundleBuilder.Build(Path.Combine(directory.Path, "bundle"), requestProcessSpawn: requestsPermission, requireDependency: requiresDependency);
         await using var runtime = RuntimeBootstrap.Create(paths.Root, discoveryPollInterval: TimeSpan.FromMilliseconds(20));
-        await runtime.Kernel.StartAsync();
+        await runtime.Kernel.StartAsync(TestContext.Current.CancellationToken);
         File.Copy(bundle.Path, Path.Combine(paths.Inbox, "hello.murchalka"));
 
         var status = await WaitForStateAsync(runtime, expected);

@@ -34,14 +34,14 @@ public sealed class BindingStoreTests
             policies = new { ambiguity = "fail", missingScopedBinding = "inheritParent", providerUnavailable = "fail" }
         });
 
-        var stored = await store.ReplaceAsync(document, 0, CancellationToken.None);
+        var stored = await store.ReplaceAsync(document, 0, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, stored.Revision);
         Assert.Equal("dev.murchalka.storage-postgresql", Assert.Single(stored.Bindings).Provider.Primary.ModuleId.Value);
         Assert.True(File.Exists(paths.Bindings));
-        var stale = await Assert.ThrowsAsync<BindingRevisionConflictException>(() => store.ReplaceAsync(document, 0, CancellationToken.None));
+        var stale = await Assert.ThrowsAsync<BindingRevisionConflictException>(() => store.ReplaceAsync(document, 0, TestContext.Current.CancellationToken));
         Assert.Equal(1, stale.ActualRevision);
-        var reloaded = await store.GetAsync(CancellationToken.None);
+        var reloaded = await store.GetAsync(TestContext.Current.CancellationToken);
         Assert.True(JsonElement.DeepEquals(BindingDocumentJson.Serialize(stored), BindingDocumentJson.Serialize(reloaded)));
     }
 }

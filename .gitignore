@@ -8,3 +8,4 @@ coverage/
 .DS_Store
 riderModule.iml
 /_ReSharper.Caches/
+packages.lock.json

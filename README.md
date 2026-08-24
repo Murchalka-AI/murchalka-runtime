@@ -36,7 +36,7 @@ The first-party SQLite `storage.records@1` provider is delivered independently i
 ## Build and test
 
 ```sh
-dotnet restore --locked-mode
+dotnet restore
 dotnet test --no-restore
 ```
 

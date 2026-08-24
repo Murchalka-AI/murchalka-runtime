@@ -16,6 +16,7 @@ concurrency:
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: 1
   DOTNET_NOLOGO: true
   NUGET_XMLDOC_MODE: skip
 
@@ -39,7 +40,9 @@ jobs:
         with:
           global-json-file: global.json
           cache: true
-          cache-dependency-path: '**/packages.lock.json'
+          cache-dependency-path: |
+            Directory.Packages.props
+            **/*.csproj
 
       - name: Authenticate to GitHub Packages
         shell: bash
@@ -52,8 +55,8 @@ jobs:
           --store-password-in-clear-text
           --configfile NuGet.Config
 
-      - name: Restore locked dependencies
-        run: dotnet restore Murchalka.Runtime.slnx --locked-mode --configfile NuGet.Config
+      - name: Restore dependencies
+        run: dotnet restore Murchalka.Runtime.slnx --configfile NuGet.Config
 
       - name: Verify formatting
         if: runner.os == 'Linux'
@@ -64,7 +67,7 @@ jobs:
 
       - name: Test with coverage
         run: >-
-          dotnet test Murchalka.Runtime.slnx
+          dotnet test --solution Murchalka.Runtime.slnx
           --configuration Release
           --no-build
           --no-restore
@@ -97,7 +100,9 @@ jobs:
         with:
           global-json-file: global.json
           cache: true
-          cache-dependency-path: '**/packages.lock.json'
+          cache-dependency-path: |
+            Directory.Packages.props
+            **/*.csproj
 
       - name: Authenticate to GitHub Packages
         shell: bash
@@ -110,8 +115,8 @@ jobs:
           --store-password-in-clear-text
           --configfile NuGet.Config
 
-      - name: Restore locked dependencies
-        run: dotnet restore Murchalka.Runtime.slnx --locked-mode --configfile NuGet.Config
+      - name: Restore dependencies
+        run: dotnet restore Murchalka.Runtime.slnx --configfile NuGet.Config
 
       - name: Build
         run: dotnet build Murchalka.Runtime.slnx --configuration Release --no-restore

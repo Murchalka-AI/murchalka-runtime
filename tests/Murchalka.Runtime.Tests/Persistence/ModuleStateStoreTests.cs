@@ -19,16 +19,18 @@ public sealed class ModuleStateStoreTests
         var moduleId = new ModuleId("dev.murchalka.state-test");
         var record = new InstalledModuleRecord(moduleId, SemanticVersion.Parse("1.0.0"), "sha256:" + new string('a', 64), "dev.murchalka.tests",
             ModuleLifecycleState.Verifying, 1, DateTimeOffset.UtcNow, "initial", null, true);
-        await store.SaveAsync(record, CancellationToken.None);
+        await store.SaveAsync(record, TestContext.Current.CancellationToken);
 
         using var stopReading = new CancellationTokenSource();
-        var reader = Task.Run(() => ReadUntilCancelledAsync(store, moduleId, stopReading.Token));
+        var reader = Task.Run(
+            () => ReadUntilCancelledAsync(store, moduleId, stopReading.Token),
+            TestContext.Current.CancellationToken);
         try
         {
             for (var revision = 2; revision <= 256; revision++)
             {
                 record = record with { Revision = revision, UpdatedAt = DateTimeOffset.UtcNow };
-                await store.SaveAsync(record, CancellationToken.None);
+                await store.SaveAsync(record, TestContext.Current.CancellationToken);
             }
         }
         finally
@@ -37,7 +39,7 @@ public sealed class ModuleStateStoreTests
             await reader;
         }
 
-        var persisted = await store.GetAsync(moduleId, CancellationToken.None);
+        var persisted = await store.GetAsync(moduleId, TestContext.Current.CancellationToken);
         Assert.NotNull(persisted);
         Assert.Equal(256, persisted.Revision);
     }

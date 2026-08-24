@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
     <Description>Runtime unit, property, security, and end-to-end tests.</Description>
   </PropertyGroup>
   <ItemGroup>
@@ -18,7 +20,10 @@
     <ProjectReference Include="../Murchalka.Runtime.TestModule/Murchalka.Runtime.TestModule.csproj" ReferenceOutputAssembly="false" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="coverlet.collector"><PrivateAssets>all</PrivateAssets></PackageReference>
-    <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio"><PrivateAssets>all</PrivateAssets></PackageReference>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 </Project>

@@ -35,13 +35,13 @@ public sealed class DurableEventFabricTests
         fabric.RegisterModule(subscriber, subscriberInstance, directory.Path, EmptyGrant());
         var eventId = Guid.NewGuid();
 
-        var envelope = await fabric.PublishAsync(Request(eventId, publisher.Id, publisherInstance), CancellationToken.None);
+        var envelope = await fabric.PublishAsync(Request(eventId, publisher.Id, publisherInstance), TestContext.Current.CancellationToken);
         Assert.Equal("sha256:", envelope.PayloadSchema[..7]);
-        Assert.Equal(1, await fabric.DispatchPendingAsync(CancellationToken.None));
+        Assert.Equal(1, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
         Assert.Single(sink.Deliveries);
         Assert.Equal("relationship-update", sink.Deliveries.Single().HandlerId);
 
-        Assert.Equal(0, await fabric.DispatchPendingAsync(CancellationToken.None));
+        Assert.Equal(0, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
         Assert.Single(sink.Deliveries);
         Assert.Empty(Directory.EnumerateFiles(paths.EventOutbox, "*.json"));
     }
@@ -62,16 +62,16 @@ public sealed class DurableEventFabricTests
         var firstSubscriber = new InstanceId("relationships-1");
         fabric.RegisterModule(publisher, publisherInstance, directory.Path, EmptyGrant());
         fabric.RegisterModule(subscriber, firstSubscriber, directory.Path, EmptyGrant());
-        await fabric.PublishAsync(Request(Guid.NewGuid(), publisher.Id, publisherInstance), CancellationToken.None);
+        await fabric.PublishAsync(Request(Guid.NewGuid(), publisher.Id, publisherInstance), TestContext.Current.CancellationToken);
 
         fabric.UnregisterModule(subscriber.Id, firstSubscriber);
-        Assert.Equal(0, await fabric.DispatchPendingAsync(CancellationToken.None));
+        Assert.Equal(0, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
         Assert.Empty(sink.Deliveries);
         Assert.Single(Directory.EnumerateFiles(paths.EventOutbox, "*.json"));
 
         var replacement = new InstanceId("relationships-2");
         fabric.RegisterModule(subscriber, replacement, directory.Path, EmptyGrant());
-        Assert.Equal(1, await fabric.DispatchPendingAsync(CancellationToken.None));
+        Assert.Equal(1, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
         Assert.Equal(replacement, sink.Deliveries.Single().ConsumerInstance);
     }
 
@@ -92,19 +92,19 @@ public sealed class DurableEventFabricTests
         var subscriberInstance = new InstanceId("relationships-1");
         fabric.RegisterModule(publisher, publisherInstance, directory.Path, EmptyGrant());
         fabric.RegisterModule(incompatible, subscriberInstance, directory.Path, EmptyGrant());
-        await fabric.PublishAsync(Request(Guid.NewGuid(), publisher.Id, publisherInstance), CancellationToken.None);
+        await fabric.PublishAsync(Request(Guid.NewGuid(), publisher.Id, publisherInstance), TestContext.Current.CancellationToken);
 
-        Assert.Equal(1, await fabric.DispatchPendingAsync(CancellationToken.None));
-        var quarantined = Assert.Single(await fabric.GetQuarantineAsync(CancellationToken.None));
+        Assert.Equal(1, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
+        var quarantined = Assert.Single(await fabric.GetQuarantineAsync(TestContext.Current.CancellationToken));
         Assert.Equal("event-schema-incompatible", quarantined.ReasonCode);
         fabric.UnregisterModule(incompatible.Id, subscriberInstance);
         var repaired = Phase3TestModuleFactory.Create("dev.murchalka.relationships", eventSubscriptions: [new EventSubscription("interaction.completed", "event.schema.json", "relationship-update")]);
         fabric.RegisterModule(repaired, new InstanceId("relationships-2"), directory.Path, EmptyGrant());
 
-        Assert.True(await fabric.ReplayAsync(quarantined.Id, CancellationToken.None));
-        Assert.Equal(1, await fabric.DispatchPendingAsync(CancellationToken.None));
+        Assert.True(await fabric.ReplayAsync(quarantined.Id, TestContext.Current.CancellationToken));
+        Assert.Equal(1, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
         Assert.Single(sink.Deliveries);
-        Assert.Empty(await fabric.GetQuarantineAsync(CancellationToken.None));
+        Assert.Empty(await fabric.GetQuarantineAsync(TestContext.Current.CancellationToken));
     }
 
     /// <summary>Verifies bounded exponential retry and quarantine after the declared attempt limit.</summary>
@@ -123,17 +123,17 @@ public sealed class DurableEventFabricTests
         var publisherInstance = new InstanceId("publisher-1");
         fabric.RegisterModule(publisher, publisherInstance, directory.Path, EmptyGrant());
         fabric.RegisterModule(subscriber, new InstanceId("relationships-1"), directory.Path, EmptyGrant());
-        await fabric.PublishAsync(Request(Guid.NewGuid(), publisher.Id, publisherInstance), CancellationToken.None);
+        await fabric.PublishAsync(Request(Guid.NewGuid(), publisher.Id, publisherInstance), TestContext.Current.CancellationToken);
 
-        Assert.Equal(0, await fabric.DispatchPendingAsync(CancellationToken.None));
+        Assert.Equal(0, await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken));
         foreach (var delay in new[] { 1, 2, 4, 8 })
         {
             clock.Advance(TimeSpan.FromSeconds(delay));
-            _ = await fabric.DispatchPendingAsync(CancellationToken.None);
+            _ = await fabric.DispatchPendingAsync(TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(5, sink.Deliveries.Count);
-        var quarantined = Assert.Single(await fabric.GetQuarantineAsync(CancellationToken.None));
+        var quarantined = Assert.Single(await fabric.GetQuarantineAsync(TestContext.Current.CancellationToken));
         Assert.Equal("event-delivery-attempts-exhausted", quarantined.ReasonCode);
         Assert.Empty(Directory.EnumerateFiles(paths.EventOutbox, "*.json"));
     }

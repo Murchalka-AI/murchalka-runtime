@@ -19,15 +19,15 @@ public sealed class ModuleConfigurationStoreTests
         var bundle = CreateBundle(directory.Path, ConfigurationRestartPolicy.Reload);
         using var store = new FileModuleConfigurationStore(new RuntimePaths(Path.Combine(directory.Path, "runtime")));
 
-        var initial = await store.GetAsync(bundle, CancellationToken.None);
-        var updated = await store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { nested = new { count = 7 } }), 0, CancellationToken.None);
+        var initial = await store.GetAsync(bundle, TestContext.Current.CancellationToken);
+        var updated = await store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { nested = new { count = 7 } }), 0, TestContext.Current.CancellationToken);
 
         Assert.Equal("sqlite", initial.Values.GetProperty("provider").GetString());
         Assert.Equal(7, updated.Values.GetProperty("nested").GetProperty("count").GetInt32());
         Assert.True(updated.Values.GetProperty("nested").GetProperty("enabled").GetBoolean());
         Assert.Equal(1, updated.Revision);
-        await Assert.ThrowsAsync<InvalidDataException>(() => store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { nested = new { count = -1 } }), 1, CancellationToken.None));
-        await Assert.ThrowsAsync<ConfigurationRevisionConflictException>(() => store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { }), 0, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { nested = new { count = -1 } }), 1, TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<ConfigurationRevisionConflictException>(() => store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { }), 0, TestContext.Current.CancellationToken));
     }
 
     /// <summary>Verifies that immutable configuration accepts only its initial revision.</summary>
@@ -37,9 +37,9 @@ public sealed class ModuleConfigurationStoreTests
         using var directory = new TestDirectory();
         var bundle = CreateBundle(directory.Path, ConfigurationRestartPolicy.Immutable);
         using var store = new FileModuleConfigurationStore(new RuntimePaths(Path.Combine(directory.Path, "runtime")));
-        await store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { }), 0, CancellationToken.None);
+        await store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { }), 0, TestContext.Current.CancellationToken);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { }), 1, CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.ReplaceAsync(bundle, JsonSerializer.SerializeToElement(new { }), 1, TestContext.Current.CancellationToken));
     }
 
     private static InstalledBundle CreateBundle(string root, ConfigurationRestartPolicy policy)

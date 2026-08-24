@@ -24,7 +24,10 @@ public sealed class StateMigrationCoordinatorTests
         Directory.CreateDirectory(migrations);
         var script = Encoding.UTF8.GetBytes("CREATE TABLE sample(id TEXT PRIMARY KEY);");
         var checksum = "sha256:" + Convert.ToHexStringLower(SHA256.HashData(script));
-        await File.WriteAllBytesAsync(Path.Combine(migrations, "001.sql"), script);
+        await File.WriteAllBytesAsync(
+            Path.Combine(migrations, "001.sql"),
+            script,
+            TestContext.Current.CancellationToken);
         await File.WriteAllTextAsync(Path.Combine(migrations, "migrations.yaml"), $$"""
         apiVersion: migrations.murchalka.dev/v1
         kind: ModuleMigrations
@@ -40,7 +43,7 @@ public sealed class StateMigrationCoordinatorTests
             transactional: true
             reversible: false
             rollbackStrategy: applicationForwardFix
-        """);
+        """, TestContext.Current.CancellationToken);
         var requirement = new CapabilityRequirement("records", null, "storage.records", VersionRangeExpression.Parse(">=1.0.0 <2.0.0"),
             new Dictionary<string, JsonElement>(), RequirementCardinality.ExactlyOne, RequirementSelectionMode.Admin, null, null, null, false);
         var manifest = Phase3TestModuleFactory.Create("dev.murchalka.stateful") with
@@ -55,8 +58,8 @@ public sealed class StateMigrationCoordinatorTests
         var capabilities = new CapturingCapabilityRegistry();
         using var coordinator = new ProviderStateMigrationCoordinator(new RuntimePaths(Path.Combine(directory.Path, "runtime")), capabilities, new NoopRootAudit());
 
-        await coordinator.ApplyPendingAsync(bundle, resolution, CancellationToken.None);
-        await coordinator.ApplyPendingAsync(bundle, resolution, CancellationToken.None);
+        await coordinator.ApplyPendingAsync(bundle, resolution, TestContext.Current.CancellationToken);
+        await coordinator.ApplyPendingAsync(bundle, resolution, TestContext.Current.CancellationToken);
 
         var invocation = Assert.Single(capabilities.Invocations);
         Assert.Equal(manifest.Id, invocation.ConsumerModuleId);

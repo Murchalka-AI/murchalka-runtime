@@ -22,11 +22,11 @@ public sealed class SecretBrokerTests
         var paths = new RuntimePaths(directory.Path);
         var plaintext = Encoding.UTF8.GetBytes("not-visible-on-disk");
         using (var first = new EncryptedFileSecretStore(paths))
-            await first.PutAsync("model/api-key", plaintext, 0, CancellationToken.None);
+            await first.PutAsync("model/api-key", plaintext, 0, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("not-visible-on-disk", string.Join('\n', Directory.EnumerateFiles(paths.Secrets).Select(File.ReadAllText)), StringComparison.Ordinal);
         using var second = new EncryptedFileSecretStore(paths);
-        var restored = await second.GetAsync("model/api-key", CancellationToken.None);
+        var restored = await second.GetAsync("model/api-key", TestContext.Current.CancellationToken);
 
         Assert.NotNull(restored);
         Assert.Equal(plaintext, restored!.Value);
@@ -41,7 +41,7 @@ public sealed class SecretBrokerTests
         using var directory = new TestDirectory();
         var paths = new RuntimePaths(directory.Path);
         using var store = new EncryptedFileSecretStore(paths);
-        await store.PutAsync("model/api-key", Encoding.UTF8.GetBytes("secret"), 0, CancellationToken.None);
+        await store.PutAsync("model/api-key", Encoding.UTF8.GetBytes("secret"), 0, TestContext.Current.CancellationToken);
         var broker = new RootSecretBroker(store, new NoopRootAudit());
         var permissions = JsonSerializer.SerializeToElement(new { secrets = SecretNames });
         var manifest = Phase3TestModuleFactory.Create("dev.murchalka.secret-consumer", permissions: permissions);
@@ -49,9 +49,9 @@ public sealed class SecretBrokerTests
         var request = new SecretLeaseRequest("operation-1", "model/api-key", "model-inference", DateTimeOffset.UtcNow.AddMinutes(1));
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => broker.LeaseAsync(bundle,
-            new PermissionDecision(true, "test", "grant", 1, JsonSerializer.SerializeToElement(new { secrets = Array.Empty<string>() }), null), request, CancellationToken.None));
+            new PermissionDecision(true, "test", "grant", 1, JsonSerializer.SerializeToElement(new { secrets = Array.Empty<string>() }), null), request, TestContext.Current.CancellationToken));
         var lease = await broker.LeaseAsync(bundle,
-            new PermissionDecision(true, "test", "grant", 1, permissions, null), request, CancellationToken.None);
+            new PermissionDecision(true, "test", "grant", 1, permissions, null), request, TestContext.Current.CancellationToken);
 
         Assert.Equal("secret", Encoding.UTF8.GetString(Convert.FromBase64String(lease.Value)));
         Assert.True(lease.ExpiresAt <= request.Deadline);

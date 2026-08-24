@@ -33,20 +33,20 @@ public sealed class DynamicPipelineRuntimeTests
         runtime.RegisterModule(owner, ownerInstance, directory.Path, BindingDocument.Empty("local"));
 
         var firstRevision = runtime.Snapshot().Revision;
-        var before = await runtime.ExecuteAsync(Request(), CancellationToken.None);
+        var before = await runtime.ExecuteAsync(Request(), TestContext.Current.CancellationToken);
         Assert.Equal(["identity"], invoker.Invocations);
         Assert.True(before.GetProperty("identity").GetBoolean());
 
         invoker.Invocations.Clear();
         runtime.RegisterModule(relationship, relationshipInstance, directory.Path, BindingDocument.Empty("local"));
         Assert.True(runtime.Snapshot().Revision > firstRevision);
-        var attached = await runtime.ExecuteAsync(Request(), CancellationToken.None);
+        var attached = await runtime.ExecuteAsync(Request(), TestContext.Current.CancellationToken);
         Assert.Equal(["identity", "relationship-context"], invoker.Invocations);
         Assert.True(attached.GetProperty("relationship-context").GetBoolean());
 
         invoker.Invocations.Clear();
         runtime.UnregisterModule(relationship.Id, relationshipInstance);
-        var detached = await runtime.ExecuteAsync(Request(), CancellationToken.None);
+        var detached = await runtime.ExecuteAsync(Request(), TestContext.Current.CancellationToken);
         Assert.Equal(["identity"], invoker.Invocations);
         Assert.False(detached.TryGetProperty("relationship-context", out _));
     }

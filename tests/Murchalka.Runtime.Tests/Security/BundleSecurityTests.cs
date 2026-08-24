@@ -20,12 +20,12 @@ public sealed class BundleSecurityTests
         var valid = builder.Build(Path.Combine(directory.Path, "valid"));
         var verifier = new BundleVerifier(new TrustedKeyStore(paths));
 
-        var result = await verifier.VerifyAsync(valid.Path, CancellationToken.None);
+        var result = await verifier.VerifyAsync(valid.Path, TestContext.Current.CancellationToken);
 
         Assert.Equal(valid.Digest, result.Identity.Digest);
         Assert.Equal("dev.murchalka.hello-test", result.Manifest.Id.Value);
         var tampered = builder.Build(Path.Combine(directory.Path, "tampered"), tamperArtifactAfterSigning: true);
-        var exception = await Assert.ThrowsAsync<BundleVerificationException>(() => verifier.VerifyAsync(tampered.Path, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<BundleVerificationException>(() => verifier.VerifyAsync(tampered.Path, TestContext.Current.CancellationToken));
         Assert.Equal(BundleVerificationFailureKind.HashMismatch, exception.Kind);
     }
 
@@ -40,7 +40,7 @@ public sealed class BundleSecurityTests
         paths.EnsureCreated();
         var verifier = new BundleVerifier(new TrustedKeyStore(paths));
 
-        var exception = await Assert.ThrowsAsync<BundleTrustRequiredException>(() => verifier.VerifyAsync(bundle.Path, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<BundleTrustRequiredException>(() => verifier.VerifyAsync(bundle.Path, TestContext.Current.CancellationToken));
 
         Assert.Equal(bundle.Digest, exception.Candidate.Identity.Digest);
         Assert.Equal("dev.murchalka.hello-test", exception.Candidate.Manifest.Id.Value);
