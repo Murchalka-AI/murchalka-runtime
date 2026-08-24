@@ -4,6 +4,7 @@ using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.Runtime.Bootstrap.Composition;
 using Murchalka.Runtime.Contracts.Bindings;
 using Murchalka.Runtime.Contracts.Common;
+using Murchalka.Runtime.Contracts.Configuration;
 
 var root = ReadOption(args, "--root") ?? Path.Combine(AppContext.BaseDirectory, "var");
 var url = ReadOption(args, "--url") ?? "http://127.0.0.1:5078";
@@ -71,6 +72,64 @@ app.MapPut("/v1/bindings", async (HttpRequest request, long expectedRevision, Ca
     catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentOutOfRangeException)
     {
         return Results.BadRequest(new { code = "binding-document-invalid", message = exception.Message });
+    }
+});
+app.MapGet("/v1/modules/{moduleId}/configuration", async (string moduleId, CancellationToken cancellationToken) =>
+{
+    try { return await runtime.Kernel.GetConfigurationAsync(new ModuleId(moduleId), cancellationToken) is { } snapshot ? Results.Ok(snapshot) : Results.NotFound(); }
+    catch (ArgumentException exception) { return Results.BadRequest(new { code = "module-id-invalid", message = exception.Message }); }
+    catch (InvalidDataException exception) { return Results.Conflict(new { code = "configuration-invalid", message = exception.Message }); }
+});
+app.MapPut("/v1/modules/{moduleId}/configuration", async (string moduleId, HttpRequest request, long expectedRevision, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var values = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        return await runtime.Kernel.ReplaceConfigurationAsync(new ModuleId(moduleId), values, expectedRevision, cancellationToken) is { } snapshot
+            ? Results.Ok(snapshot)
+            : Results.NotFound();
+    }
+    catch (ConfigurationRevisionConflictException exception)
+    {
+        return Results.Conflict(new { code = "configuration-revision-conflict", expectedRevision = exception.ExpectedRevision, actualRevision = exception.ActualRevision });
+    }
+    catch (Exception exception) when (exception is JsonException or InvalidDataException or InvalidOperationException or ArgumentException)
+    {
+        return Results.BadRequest(new { code = "configuration-update-rejected", message = exception.Message });
+    }
+});
+app.MapPut("/v1/secrets/{*name}", async (string name, HttpRequest request, long expectedRevision, CancellationToken cancellationToken) =>
+{
+    byte[] value = [];
+    try
+    {
+        var document = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        value = Convert.FromBase64String(document.GetProperty("value").GetString() ?? string.Empty);
+        return Results.Ok(await runtime.Kernel.PutSecretAsync(name, value, expectedRevision, cancellationToken));
+    }
+    catch (Exception exception) when (exception is JsonException or FormatException or InvalidOperationException or ArgumentException)
+    {
+        return Results.BadRequest(new { code = "secret-update-rejected", message = exception.Message });
+    }
+    finally
+    {
+        if (value.Length > 0) System.Security.Cryptography.CryptographicOperations.ZeroMemory(value);
+    }
+});
+app.MapPost("/v1/modules/{moduleId}/state/{namespaceName}/export", async (string moduleId, string namespaceName, CancellationToken cancellationToken) =>
+{
+    try { return await runtime.Kernel.ExportStateAsync(new ModuleId(moduleId), namespaceName, cancellationToken) is { } stateExport ? Results.Ok(stateExport) : Results.NotFound(); }
+    catch (Exception exception) when (exception is ArgumentException or InvalidDataException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { code = "state-export-rejected", message = exception.Message });
+    }
+});
+app.MapPost("/v1/modules/{moduleId}/state/import/{exportId}", async (string moduleId, string exportId, CancellationToken cancellationToken) =>
+{
+    try { return await runtime.Kernel.ImportStateAsync(new ModuleId(moduleId), exportId, cancellationToken) ? Results.Ok() : Results.NotFound(); }
+    catch (Exception exception) when (exception is ArgumentException or InvalidDataException or InvalidOperationException)
+    {
+        return Results.BadRequest(new { code = "state-import-rejected", message = exception.Message });
     }
 });
 app.MapPost("/v1/modules/{moduleId}/enable", async (string moduleId, CancellationToken cancellationToken) =>

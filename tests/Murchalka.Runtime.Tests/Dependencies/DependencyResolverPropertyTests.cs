@@ -217,9 +217,10 @@ public sealed class DependencyResolverPropertyTests
         JsonElement? permissions = null) => new(
             new ModuleId(id), id, SemanticVersion.Parse(version), "dev.murchalka.tests", "*", 1, [], capabilities ?? [],
             moduleRequirements ?? [], capabilityRequirements ?? [], optionalRequirements ?? [], conflicts ?? [], [], [], [], [],
+            null, [],
             permissions ?? JsonSerializer.SerializeToElement(new { }),
             new HealthPolicy(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1), 1),
-            new ActivationPolicy("automaticWhenTrusted", "keepInactive", true, TimeSpan.FromSeconds(1)), JsonSerializer.SerializeToElement(new { }));
+            new ActivationPolicy("automaticWhenTrusted", "keepInactive", true, TimeSpan.FromSeconds(1)), null, JsonSerializer.SerializeToElement(new { }));
 
     private static IEnumerable<T[]> Permutations<T>(IReadOnlyList<T> values)
     {

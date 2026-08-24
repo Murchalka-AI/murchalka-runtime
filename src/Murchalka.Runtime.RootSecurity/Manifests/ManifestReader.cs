@@ -51,6 +51,9 @@ public static class ManifestReader
         var eventSubscriptions = ReadEventSubscriptions(events?["subscriptions"]);
         var pipelineDefinitionPaths = ReadPipelineDefinitionPaths(root["extensions"]);
         RejectContributionDuplicates(pipelineDefinitionPaths, pipelineContributions, eventPublications, eventSubscriptions);
+        var configuration = ReadConfiguration(root["configuration"]);
+        var storageNamespaces = ReadStorageNamespaces(root["storage"]);
+        var upgrade = ReadUpgradePolicy(root["upgrade"]);
         var readiness = RequiredObject(health, "readiness");
         var permissions = root["permissions"] ?? new JsonObject();
         return new ModuleManifest(
@@ -58,9 +61,11 @@ public static class ManifestReader
             RequiredString(metadata, "publisher"), compatibility["runtime"]?.GetValue<string>() ?? "*", protocol,
             runtimeArtifacts, capabilities, moduleRequirements, capabilityRequirements, optionalRequirements, conflicts,
             pipelineDefinitionPaths, pipelineContributions, eventPublications, eventSubscriptions,
+            configuration, storageNamespaces,
             JsonSerializer.SerializeToElement(permissions),
             new HealthPolicy(ParseDuration(RequiredString(health, "startupTimeout")), ParseDuration(RequiredString(readiness, "timeout")), readiness["failureThreshold"]!.GetValue<int>()),
             new ActivationPolicy(RequiredString(activation, "mode"), RequiredString(activation, "failurePolicy"), activation["hotReload"]!.GetValue<bool>(), ParseDuration(RequiredString(activation, "drainTimeout"))),
+            upgrade,
             JsonSerializer.SerializeToElement(root));
     }
 
@@ -157,6 +162,73 @@ public static class ManifestReader
             throw new InvalidDataException("The dev.murchalka.pipelines extension contains an unsupported property.");
         return definitions.Select(item => item?.GetValue<string>() ?? throw new InvalidDataException("Pipeline definition path cannot be null.")).ToArray();
     }
+
+    private static ConfigurationDeclaration? ReadConfiguration(JsonNode? node)
+    {
+        if (node is not JsonObject value) return null;
+        return new ConfigurationDeclaration(
+            RequiredString(value, "schema"),
+            value["defaults"]?.GetValue<string>(),
+            RequiredString(value, "restartPolicy") switch
+            {
+                "reload" => ConfigurationRestartPolicy.Reload,
+                "restartModule" => ConfigurationRestartPolicy.RestartModule,
+                "restartTarget" => ConfigurationRestartPolicy.RestartTarget,
+                "immutable" => ConfigurationRestartPolicy.Immutable,
+                var policy => throw new InvalidDataException($"Unknown configuration restart policy '{policy}'.")
+            });
+    }
+
+    private static StorageNamespaceDeclaration[] ReadStorageNamespaces(JsonNode? node)
+    {
+        if (node is not JsonObject storage || storage["namespaces"] is not JsonArray namespaces) return [];
+        var declarations = namespaces.Select(item =>
+        {
+            var value = item!.AsObject();
+            return new StorageNamespaceDeclaration(
+                RequiredString(value, "name"),
+                RequiredString(value, "requirement"),
+                RequiredString(value, "migrations"),
+                ParseDataClassification(RequiredString(value, "dataClass")),
+                value["exportable"]!.GetValue<bool>(),
+                RequiredString(value, "purgeMode") switch
+                {
+                    "explicit" => StoragePurgeMode.Explicit,
+                    "onUninstallWithApproval" => StoragePurgeMode.OnUninstallWithApproval,
+                    "retain" => StoragePurgeMode.Retain,
+                    var mode => throw new InvalidDataException($"Unknown storage purge mode '{mode}'.")
+                });
+        }).ToArray();
+        var duplicate = declarations.GroupBy(value => value.Name, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null) throw new InvalidDataException($"Storage namespace '{duplicate.Key}' is duplicated.");
+        return declarations;
+    }
+
+    private static ModuleUpgradePolicy? ReadUpgradePolicy(JsonNode? node)
+    {
+        if (node is not JsonObject value) return null;
+        if (!string.Equals(RequiredString(value, "strategy"), "sideBySide", StringComparison.Ordinal))
+            throw new InvalidDataException("Only side-by-side module upgrades are supported.");
+        return new ModuleUpgradePolicy(
+            ParseDuration(RequiredString(value, "rollbackWindow")),
+            RequiredString(value, "stateMigration") switch
+            {
+                "none" => StateMigrationRequirement.None,
+                "optional" => StateMigrationRequirement.Optional,
+                "required" => StateMigrationRequirement.Required,
+                var requirement => throw new InvalidDataException($"Unknown state migration requirement '{requirement}'.")
+            });
+    }
+
+    private static DataClassification ParseDataClassification(string value) => value switch
+    {
+        "public" => DataClassification.Public,
+        "internal" => DataClassification.Internal,
+        "personal" => DataClassification.Personal,
+        "sensitive" => DataClassification.Sensitive,
+        "restricted" => DataClassification.Restricted,
+        _ => throw new InvalidDataException($"Unknown data classification '{value}'.")
+    };
 
     private static void RejectContributionDuplicates(
         IReadOnlyList<string> definitionPaths,

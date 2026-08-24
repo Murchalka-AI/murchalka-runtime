@@ -13,6 +13,9 @@ public sealed class RuntimeApplication : IAsyncDisposable
     private readonly IModuleStore _moduleStore;
     private readonly IModuleStateStore _stateStore;
     private readonly IDisposable _bindingStore;
+    private readonly IDisposable _configurationStore;
+    private readonly IDisposable _secretStore;
+    private readonly IDisposable _migrationCoordinator;
     private readonly HashChainedRootAudit _audit;
     private bool _disposed;
 
@@ -23,8 +26,11 @@ public sealed class RuntimeApplication : IAsyncDisposable
     /// <param name="moduleStore">The owned immutable module store.</param>
     /// <param name="stateStore">The owned module state store.</param>
     /// <param name="bindingStore">The owned administrative binding store.</param>
+    /// <param name="configurationStore">The owned module configuration store.</param>
+    /// <param name="secretStore">The owned encrypted secret store.</param>
+    /// <param name="migrationCoordinator">The owned state migration coordinator.</param>
     /// <param name="audit">The owned Root audit.</param>
-    public RuntimeApplication(RuntimePaths paths, RuntimeKernel kernel, ProcessModuleSupervisor supervisor, IModuleStore moduleStore, IModuleStateStore stateStore, IDisposable bindingStore, HashChainedRootAudit audit)
+    public RuntimeApplication(RuntimePaths paths, RuntimeKernel kernel, ProcessModuleSupervisor supervisor, IModuleStore moduleStore, IModuleStateStore stateStore, IDisposable bindingStore, IDisposable configurationStore, IDisposable secretStore, IDisposable migrationCoordinator, HashChainedRootAudit audit)
     {
         Paths = paths;
         Kernel = kernel;
@@ -32,6 +38,9 @@ public sealed class RuntimeApplication : IAsyncDisposable
         _moduleStore = moduleStore;
         _stateStore = stateStore;
         _bindingStore = bindingStore;
+        _configurationStore = configurationStore;
+        _secretStore = secretStore;
+        _migrationCoordinator = migrationCoordinator;
         _audit = audit;
     }
 
@@ -50,6 +59,9 @@ public sealed class RuntimeApplication : IAsyncDisposable
         await _supervisor.DisposeAsync().ConfigureAwait(false);
         _stateStore.Dispose();
         _bindingStore.Dispose();
+        _configurationStore.Dispose();
+        _secretStore.Dispose();
+        _migrationCoordinator.Dispose();
         _moduleStore.Dispose();
         await _audit.DisposeAsync().ConfigureAwait(false);
     }

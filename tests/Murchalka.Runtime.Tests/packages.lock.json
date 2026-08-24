@@ -136,16 +136,26 @@
           "Murchalka.Runtime.Audit": "[0.1.0, )",
           "Murchalka.Runtime.Bindings": "[0.1.0, )",
           "Murchalka.Runtime.Capabilities": "[0.1.0, )",
+          "Murchalka.Runtime.Configuration": "[0.1.0, )",
           "Murchalka.Runtime.Dependencies": "[0.1.0, )",
           "Murchalka.Runtime.Events": "[0.1.0, )",
           "Murchalka.Runtime.Kernel": "[0.1.0, )",
+          "Murchalka.Runtime.Migrations": "[0.1.0, )",
           "Murchalka.Runtime.ModuleStore": "[0.1.0, )",
           "Murchalka.Runtime.ModuleSupervisor": "[0.1.0, )",
           "Murchalka.Runtime.Pipelines": "[0.1.0, )",
-          "Murchalka.Runtime.RootSecurity": "[0.1.0, )"
+          "Murchalka.Runtime.RootSecurity": "[0.1.0, )",
+          "Murchalka.Runtime.Secrets": "[0.1.0, )"
         }
       },
       "murchalka.runtime.capabilities": {
+        "type": "Project",
+        "dependencies": {
+          "JsonSchema.Net": "[9.4.0, )",
+          "Murchalka.Runtime.Contracts": "[0.1.0, )"
+        }
+      },
+      "murchalka.runtime.configuration": {
         "type": "Project",
         "dependencies": {
           "JsonSchema.Net": "[9.4.0, )",
@@ -178,6 +188,13 @@
           "Murchalka.Runtime.Contracts": "[0.1.0, )",
           "Murchalka.Runtime.Dependencies": "[0.1.0, )",
           "Murchalka.Runtime.ModuleDiscovery": "[0.1.0, )"
+        }
+      },
+      "murchalka.runtime.migrations": {
+        "type": "Project",
+        "dependencies": {
+          "Murchalka.ModuleProtocol.Json": "[0.1.12, )",
+          "Murchalka.Runtime.Contracts": "[0.1.0, )"
         }
       },
       "murchalka.runtime.modulediscovery": {
@@ -220,6 +237,12 @@
         "dependencies": {
           "JsonSchema.Net": "[9.4.0, )",
           "Murchalka.ModuleProtocol.Json": "[0.1.12, )",
+          "Murchalka.Runtime.Contracts": "[0.1.0, )"
+        }
+      },
+      "murchalka.runtime.secrets": {
+        "type": "Project",
+        "dependencies": {
           "Murchalka.Runtime.Contracts": "[0.1.0, )"
         }
       },

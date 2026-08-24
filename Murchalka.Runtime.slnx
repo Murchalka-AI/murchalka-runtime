@@ -22,6 +22,7 @@
     <File Path="docs/phase1-completion-report.md" />
     <File Path="docs/phase2-completion-report.md" />
     <File Path="docs/phase3-completion-report.md" />
+    <File Path="docs/phase4-completion-report.md" />
   </Folder>
   <Folder Name="/Solution Items/docs/adr/">
     <File Path="docs/adr/0001-microkernel-boundary.md" />
@@ -30,17 +31,21 @@
     <File Path="docs/adr/0004-dependency-cardinality-and-selection.md" />
     <File Path="docs/adr/0005-scoped-binding-resolution.md" />
     <File Path="docs/adr/0006-dynamic-pipelines-and-durable-events.md" />
+    <File Path="docs/adr/0007-module-state-configuration-and-upgrades.md" />
+    <File Path="docs/adr/0008-root-secret-broker.md" />
   </Folder>
   <Folder Name="/Solution Items/docs/operations/">
     <File Path="docs/operations/phase1-runbook.md" />
     <File Path="docs/operations/phase2-runbook.md" />
     <File Path="docs/operations/phase3-runbook.md" />
+    <File Path="docs/operations/phase4-runbook.md" />
     <File Path="docs/operations/release.md" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
     <Project Path="src/Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />
     <Project Path="src/Murchalka.Runtime.RootSecurity/Murchalka.Runtime.RootSecurity.csproj" />
+    <Project Path="src/Murchalka.Runtime.Secrets/Murchalka.Runtime.Secrets.csproj" />
     <Project Path="src/Murchalka.Runtime.ModuleStore/Murchalka.Runtime.ModuleStore.csproj" />
     <Project Path="src/Murchalka.Runtime.ModuleDiscovery/Murchalka.Runtime.ModuleDiscovery.csproj" />
     <Project Path="src/Murchalka.Runtime.ModuleGateway/Murchalka.Runtime.ModuleGateway.csproj" />
@@ -48,9 +53,11 @@
     <Project Path="src/Murchalka.Runtime.Capabilities/Murchalka.Runtime.Capabilities.csproj" />
     <Project Path="src/Murchalka.Runtime.Dependencies/Murchalka.Runtime.Dependencies.csproj" />
     <Project Path="src/Murchalka.Runtime.Bindings/Murchalka.Runtime.Bindings.csproj" />
+    <Project Path="src/Murchalka.Runtime.Configuration/Murchalka.Runtime.Configuration.csproj" />
     <Project Path="src/Murchalka.Runtime.Pipelines/Murchalka.Runtime.Pipelines.csproj" />
     <Project Path="src/Murchalka.Runtime.Events/Murchalka.Runtime.Events.csproj" />
     <Project Path="src/Murchalka.Runtime.Kernel/Murchalka.Runtime.Kernel.csproj" />
+    <Project Path="src/Murchalka.Runtime.Migrations/Murchalka.Runtime.Migrations.csproj" />
     <Project Path="src/Murchalka.Runtime.Bootstrap/Murchalka.Runtime.Bootstrap.csproj" />
     <Project Path="src/Murchalka.Runtime.Host/Murchalka.Runtime.Host.csproj" />
   </Folder>

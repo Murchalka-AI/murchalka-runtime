@@ -1,6 +1,6 @@
 # Murchalka Runtime
 
-Phase 3 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
+Phase 4 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
 
 Implemented boundaries:
 
@@ -22,9 +22,16 @@ Implemented boundaries:
 - deterministic DAG ordering, stage execution semantics, exactly-one bindings, and atomic graph snapshots;
 - live pipeline and event contributor attachment/detachment during module lifecycle changes;
 - schema-validated durable event outbox, inbox deduplication, partition ordering, bounded retry, quarantine, and replay;
-- local HTTP diagnostics plus enable/disable operations.
+- schema-validated revisioned module configuration with signed defaults, optimistic concurrency, live reload and restart policies;
+- stable provider-owned data directories separated from ephemeral module instances;
+- signed linear storage migrations routed through the resolved provider, with durable ledgers and reversible upgrade rollback;
+- digest-verified state export/import that preserves module ownership and requires import while the consumer is inactive;
+- encrypted-at-rest local secrets, manifest/grant intersection, bounded leases and payload-free Root audit;
+- authenticated reverse capability routing restricted to the current dependency snapshot;
+- side-by-side module upgrade health gating, route switching, rollback retention and prior-bundle recovery;
+- local HTTP diagnostics plus lifecycle, configuration, state portability and secret administration operations.
 
-Provider state, stateful migration, profile bindings, and configuration/secret providers intentionally remain later phases. Missing providers, ambiguous administrator selection, incompatible ranges, permission gaps, conflicts, and cycles remain unroutable in explicit lifecycle states.
+The first-party SQLite `storage.records@1` provider is delivered independently in `murchalka-storage-sqlite`; it is not compiled into the Runtime. Product profile modules and remote/clustered configuration or secret backends remain later phases. Missing providers, ambiguous administrator selection, incompatible ranges, permission gaps, conflicts, cycles and irreversible failed upgrade migrations remain fail-closed.
 
 ## Build and test
 
@@ -54,4 +61,6 @@ git push origin v0.1.0
 dotnet run --project src/Murchalka.Runtime.Host -- --root ./var
 ```
 
-The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; generated locks live in `modules/locks`; durable event state lives under `events`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant. Use `GET /v1/bindings` and `PUT /v1/bindings?expectedRevision=N` for optimistic-concurrency administration.
+The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; module configuration lives in `configuration/modules`; encrypted local secrets live in `configuration/secrets`; migration ledgers and exports live under `modules/migrations` and `modules/exports`; stable provider data lives under `module-data`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
+
+Configuration endpoints use optimistic revisions. Secret values are accepted only as Base64 and are never returned by the administration API. State imports accept only Runtime-generated export ids and require the consumer module to be inactive. Operational procedures are documented in [`docs/operations/phase4-runbook.md`](docs/operations/phase4-runbook.md).

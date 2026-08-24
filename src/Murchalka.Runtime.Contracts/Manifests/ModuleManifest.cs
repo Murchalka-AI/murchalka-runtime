@@ -20,9 +20,12 @@ namespace Murchalka.Runtime.Contracts.Manifests;
 /// <param name="PipelineContributions">The pipeline handlers contributed by the module.</param>
 /// <param name="EventPublications">The events the module is allowed to publish.</param>
 /// <param name="EventSubscriptions">The event handlers contributed by the module.</param>
+/// <param name="Configuration">The optional module configuration declaration.</param>
+/// <param name="StorageNamespaces">The module-owned storage namespaces.</param>
 /// <param name="RequestedPermissions">The manifest permission request.</param>
 /// <param name="Health">The health policy.</param>
 /// <param name="Activation">The activation policy.</param>
+/// <param name="Upgrade">The optional side-by-side upgrade policy.</param>
 /// <param name="Document">The complete validated manifest document.</param>
 public sealed record ModuleManifest(
     ModuleId Id,
@@ -41,9 +44,12 @@ public sealed record ModuleManifest(
     IReadOnlyList<PipelineContribution> PipelineContributions,
     IReadOnlyList<EventPublication> EventPublications,
     IReadOnlyList<EventSubscription> EventSubscriptions,
+    ConfigurationDeclaration? Configuration,
+    IReadOnlyList<StorageNamespaceDeclaration> StorageNamespaces,
     JsonElement RequestedPermissions,
     HealthPolicy Health,
     ActivationPolicy Activation,
+    ModuleUpgradePolicy? Upgrade,
     JsonElement Document)
 {
     /// <summary>Gets the stable module id and version key.</summary>

@@ -39,14 +39,22 @@ public sealed record RuntimePaths
     public string Sockets => Path.Combine(Modules, "sockets");
     /// <summary>Gets the module-owned data directory.</summary>
     public string ModuleData => Path.Combine(Root, "module-data");
+    /// <summary>Gets the trusted storage migration ledger directory.</summary>
+    public string MigrationState => Path.Combine(Modules, "migrations");
+    /// <summary>Gets the durable state export directory.</summary>
+    public string StateExports => Path.Combine(Modules, "exports");
     /// <summary>Gets the Root audit directory.</summary>
     public string Audit => Path.Combine(Root, "audit");
     /// <summary>Gets the trusted publisher configuration path.</summary>
     public string TrustedPublishers => Path.Combine(Configuration, "trusted-publishers.json");
     /// <summary>Gets the permission grant directory.</summary>
     public string Grants => Path.Combine(Configuration, "grants");
+    /// <summary>Gets the encrypted local secret store directory.</summary>
+    public string Secrets => Path.Combine(Configuration, "secrets");
     /// <summary>Gets the administrative binding document path.</summary>
     public string Bindings => Path.Combine(Configuration, "murchalka.bindings.yaml");
+    /// <summary>Gets the revisioned per-module configuration directory.</summary>
+    public string ModuleConfiguration => Path.Combine(Configuration, "modules");
     /// <summary>Gets the generated composition lock directory.</summary>
     public string Locks => Path.Combine(Modules, "locks");
     /// <summary>Gets the durable local event fabric root.</summary>
@@ -61,7 +69,7 @@ public sealed record RuntimePaths
     /// <summary>Creates every required Runtime directory when it is absent.</summary>
     public void EnsureCreated()
     {
-        foreach (var path in new[] { Configuration, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, Sockets, ModuleData, Audit, Grants, Locks, EventOutbox, EventInbox, EventQuarantine })
+        foreach (var path in new[] { Configuration, ModuleConfiguration, Secrets, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, MigrationState, StateExports, Sockets, ModuleData, Audit, Grants, Locks, EventOutbox, EventInbox, EventQuarantine })
             Directory.CreateDirectory(path);
     }
 }

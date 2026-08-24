@@ -2,12 +2,14 @@ using Murchalka.Runtime.Audit.Services;
 using Murchalka.Runtime.Bindings.Services;
 using Murchalka.Runtime.Bootstrap.Hosting;
 using Murchalka.Runtime.Capabilities.Registry;
+using Murchalka.Runtime.Configuration.Services;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Dependencies.Locks;
 using Murchalka.Runtime.Dependencies.Resolution;
 using Murchalka.Runtime.Events.Delivery;
 using Murchalka.Runtime.Events.Fabric;
 using Murchalka.Runtime.Kernel.Services;
+using Murchalka.Runtime.Migrations.Services;
 using Murchalka.Runtime.ModuleDiscovery.Watchers;
 using Murchalka.Runtime.ModuleStore.Services;
 using Murchalka.Runtime.ModuleSupervisor.Services;
@@ -16,6 +18,7 @@ using Murchalka.Runtime.Pipelines.Registry;
 using Murchalka.Runtime.RootSecurity.Bundles;
 using Murchalka.Runtime.RootSecurity.Permissions;
 using Murchalka.Runtime.RootSecurity.Trust;
+using Murchalka.Runtime.Secrets.Services;
 
 namespace Murchalka.Runtime.Bootstrap.Composition;
 
@@ -41,12 +44,16 @@ public static class RuntimeBootstrap
         var supervisor = new ProcessModuleSupervisor(paths);
         var capabilities = new CapabilityRegistry(supervisor, audit);
         var bindings = new FileBindingStore(paths, "local");
+        var configuration = new FileModuleConfigurationStore(paths, clock);
+        var secretStore = new EncryptedFileSecretStore(paths, clock);
+        var secretBroker = new RootSecretBroker(secretStore, audit, clock);
         var resolver = new DependencyResolver();
         var locks = new CompositionLockStore(paths, clock);
         var pipelines = new DynamicPipelineRuntime(new ModulePipelineHandlerInvoker(supervisor), audit, clock);
         var events = new DurableEventFabric(paths, new ModuleEventDeliverySink(supervisor), audit, clock);
+        var migrations = new ProviderStateMigrationCoordinator(paths, capabilities, audit, clock);
         var watcher = new ModuleDirectoryWatcher(paths, clock, discoveryPollInterval);
-        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, resolver, locks, pipelines, events, audit, clock);
-        return new RuntimeApplication(paths, kernel, supervisor, store, state, bindings, audit);
+        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, configuration, secretStore, secretBroker, resolver, locks, pipelines, events, migrations, audit, clock);
+        return new RuntimeApplication(paths, kernel, supervisor, store, state, bindings, configuration, secretStore, migrations, audit);
     }
 }

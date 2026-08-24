@@ -1,7 +1,6 @@
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.Runtime.Contracts.Bundles;
 using Murchalka.Runtime.Contracts.Capabilities;
@@ -40,10 +39,11 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
     /// <param name="expectedProcessIdentity">The expected operating-system process identity.</param>
     /// <param name="proofKey">The ephemeral key used to authenticate the launched process.</param>
     /// <param name="grant">The permission grant supplied to the module.</param>
+    /// <param name="configuration">The validated configuration supplied to the module.</param>
     /// <param name="dependencies">The resolved dependency endpoints supplied to the module.</param>
     /// <param name="cancellationToken">A token that cancels the accept operation.</param>
     /// <returns>An authenticated module gateway session.</returns>
-    public async Task<ModuleGatewaySession> AcceptAsync(InstalledBundle bundle, RuntimeArtifact artifact, InstanceId expectedInstance, string expectedProcessIdentity, ReadOnlyMemory<byte> proofKey, PermissionDecision grant, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
+    public async Task<ModuleGatewaySession> AcceptAsync(InstalledBundle bundle, RuntimeArtifact artifact, InstanceId expectedInstance, string expectedProcessIdentity, ReadOnlyMemory<byte> proofKey, PermissionDecision grant, ConfigurationSnapshot configuration, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
     {
         var socket = await _listener.AcceptAsync(cancellationToken).ConfigureAwait(false);
         var stream = new NetworkStream(socket, ownsSocket: true);
@@ -62,8 +62,7 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
             var proof = GatewayFrameCodec.PayloadAs<ModuleProof>(proofFrame);
             ValidateProof(hello, challenge, proof, proofKey.Span);
 
-            using var empty = JsonDocument.Parse("{}");
-            await GatewayFrameCodec.WriteAsync(stream, "configurationSnapshot", new ConfigurationSnapshot(0, new string('0', 64).Insert(0, "sha256:"), empty.RootElement.Clone()), cancellationToken).ConfigureAwait(false);
+            await GatewayFrameCodec.WriteAsync(stream, "configurationSnapshot", configuration, cancellationToken).ConfigureAwait(false);
             await GatewayFrameCodec.WriteAsync(stream, "permissionGrantSnapshot", new PermissionGrantSnapshot(grant.Revision, grant.GrantId, bundle.Digest, now, grant.ExpiresAt, grant.Grant), cancellationToken).ConfigureAwait(false);
             await GatewayFrameCodec.WriteAsync(stream, "dependencyEndpointsSnapshot", dependencies, cancellationToken).ConfigureAwait(false);
             var readyFrame = await GatewayFrameCodec.ReadAsync(stream, cancellationToken).ConfigureAwait(false);
@@ -71,7 +70,7 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
             var ready = GatewayFrameCodec.PayloadAs<ModuleReady>(readyFrame);
             if (ready.ModuleId != hello.ModuleId || ready.InstanceId != hello.InstanceId || ready.EffectiveCapabilitiesDigest != capabilityDigest)
                 throw new ProtocolNegotiationException("module-ready-mismatch", "ModuleReady does not match the verified module declaration.");
-            return new ModuleGatewaySession(stream, hello, ready);
+            return new ModuleGatewaySession(stream, hello, ready, dependencies);
         }
         catch { await stream.DisposeAsync().ConfigureAwait(false); throw; }
     }

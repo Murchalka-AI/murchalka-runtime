@@ -32,9 +32,12 @@ internal static class Phase3TestModuleFactory
             pipelineContributions ?? [],
             eventPublications ?? [],
             eventSubscriptions ?? [],
+            null,
+            [],
             permissions ?? JsonSerializer.SerializeToElement(new { }),
             new HealthPolicy(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(1), 1),
             new ActivationPolicy("automaticWhenTrusted", "keepInactive", true, TimeSpan.FromSeconds(5)),
+            null,
             document);
     }
 

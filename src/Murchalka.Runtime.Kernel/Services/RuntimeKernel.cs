@@ -5,11 +5,15 @@ using Murchalka.Runtime.Contracts.Abstractions;
 using Murchalka.Runtime.Contracts.Bindings;
 using Murchalka.Runtime.Contracts.Bundles;
 using Murchalka.Runtime.Contracts.Common;
+using Murchalka.Runtime.Contracts.Configuration;
 using Murchalka.Runtime.Contracts.Dependencies;
 using Murchalka.Runtime.Contracts.Events;
 using Murchalka.Runtime.Contracts.Lifecycle;
+using Murchalka.Runtime.Contracts.Manifests;
 using Murchalka.Runtime.Contracts.Permissions;
 using Murchalka.Runtime.Contracts.Pipelines;
+using Murchalka.Runtime.Contracts.Secrets;
+using Murchalka.Runtime.Contracts.State;
 using Murchalka.Runtime.ModuleDiscovery.Watchers;
 
 namespace Murchalka.Runtime.Kernel.Services;
@@ -17,6 +21,8 @@ namespace Murchalka.Runtime.Kernel.Services;
 /// <summary>Coordinates secure module discovery, verification, installation, activation, recovery, and lifecycle transitions.</summary>
 public sealed class RuntimeKernel : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+
     private static readonly Dictionary<ModuleLifecycleState, IReadOnlySet<ModuleLifecycleState>> AllowedTransitions =
         new Dictionary<ModuleLifecycleState, IReadOnlySet<ModuleLifecycleState>>
         {
@@ -49,10 +55,14 @@ public sealed class RuntimeKernel : IAsyncDisposable
     private readonly IModuleSupervisor _supervisor;
     private readonly ICapabilityRegistry _capabilities;
     private readonly IBindingStore _bindings;
+    private readonly IModuleConfigurationStore _configuration;
+    private readonly ISecretStore _secretStore;
+    private readonly ISecretBroker _secretBroker;
     private readonly IDependencyResolver _resolver;
     private readonly ICompositionLockStore _locks;
     private readonly IPipelineRuntime _pipelines;
     private readonly IEventFabric _events;
+    private readonly IStateMigrationCoordinator _migrations;
     private readonly IRootAudit _audit;
     private readonly TimeProvider _timeProvider;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _moduleGates = new(StringComparer.Ordinal);
@@ -71,15 +81,20 @@ public sealed class RuntimeKernel : IAsyncDisposable
     /// <param name="supervisor">The module process supervisor.</param>
     /// <param name="capabilities">The runtime capability registry.</param>
     /// <param name="bindings">The scoped administrative binding store.</param>
+    /// <param name="configuration">The schema-validated module configuration store.</param>
+    /// <param name="secretStore">The encrypted local secret store.</param>
+    /// <param name="secretBroker">The Root secret lease broker.</param>
     /// <param name="resolver">The dependency resolver.</param>
     /// <param name="locks">The generated composition lock store.</param>
     /// <param name="pipelines">The dynamic pipeline runtime.</param>
     /// <param name="events">The durable local event fabric.</param>
+    /// <param name="migrations">The provider-backed state migration coordinator.</param>
     /// <param name="audit">The root audit trail.</param>
     /// <param name="timeProvider">The optional source of current time.</param>
     public RuntimeKernel(RuntimePaths paths, ModuleDirectoryWatcher watcher, IBundleVerifier verifier, IModuleStore store, IModuleStateStore state,
-        IPermissionGrantStore grants, IModuleSupervisor supervisor, ICapabilityRegistry capabilities, IBindingStore bindings,
-        IDependencyResolver resolver, ICompositionLockStore locks, IPipelineRuntime pipelines, IEventFabric events,
+        IPermissionGrantStore grants, IModuleSupervisor supervisor, ICapabilityRegistry capabilities, IBindingStore bindings, IModuleConfigurationStore configuration,
+        ISecretStore secretStore, ISecretBroker secretBroker,
+        IDependencyResolver resolver, ICompositionLockStore locks, IPipelineRuntime pipelines, IEventFabric events, IStateMigrationCoordinator migrations,
         IRootAudit audit, TimeProvider? timeProvider = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -91,10 +106,14 @@ public sealed class RuntimeKernel : IAsyncDisposable
         _supervisor = supervisor ?? throw new ArgumentNullException(nameof(supervisor));
         _capabilities = capabilities ?? throw new ArgumentNullException(nameof(capabilities));
         _bindings = bindings ?? throw new ArgumentNullException(nameof(bindings));
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _secretStore = secretStore ?? throw new ArgumentNullException(nameof(secretStore));
+        _secretBroker = secretBroker ?? throw new ArgumentNullException(nameof(secretBroker));
         _resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
         _locks = locks ?? throw new ArgumentNullException(nameof(locks));
         _pipelines = pipelines ?? throw new ArgumentNullException(nameof(pipelines));
         _events = events ?? throw new ArgumentNullException(nameof(events));
+        _migrations = migrations ?? throw new ArgumentNullException(nameof(migrations));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _supervisor.ModuleExited += OnModuleExited;
@@ -133,6 +152,154 @@ public sealed class RuntimeKernel : IAsyncDisposable
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     /// <returns>The current binding document.</returns>
     public Task<BindingDocument> GetBindingsAsync(CancellationToken cancellationToken = default) => _bindings.GetAsync(cancellationToken);
+
+    /// <summary>Gets the effective validated configuration for an installed module.</summary>
+    /// <param name="moduleId">The module identifier.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The configuration snapshot, or <see langword="null"/> when the module is unknown.</returns>
+    public async Task<ModuleConfigurationSnapshot?> GetConfigurationAsync(ModuleId moduleId, CancellationToken cancellationToken = default)
+    {
+        var record = await _state.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+        if (record is null) return null;
+        var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false);
+        return installed is null ? null : await _configuration.GetAsync(installed, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Validates, commits, and applies a module configuration revision.</summary>
+    /// <param name="moduleId">The module identifier.</param>
+    /// <param name="values">The untrusted administrator-provided values.</param>
+    /// <param name="expectedRevision">The revision observed by the administrator.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The committed snapshot, or <see langword="null"/> when the module is unknown.</returns>
+    public async Task<ModuleConfigurationSnapshot?> ReplaceConfigurationAsync(ModuleId moduleId, JsonElement values, long expectedRevision, CancellationToken cancellationToken = default)
+    {
+        var gate = Gate(moduleId.Value);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var record = await _state.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+            if (record is null) return null;
+            var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Installed bundle is missing.");
+            var policy = installed.Manifest.Configuration?.RestartPolicy
+                ?? throw new InvalidOperationException("The module does not declare configuration.");
+            if (policy == ConfigurationRestartPolicy.Immutable && record.State == ModuleLifecycleState.Active)
+                throw new InvalidOperationException("Immutable configuration can only be initialized while the module is inactive.");
+            var snapshot = await _configuration.ReplaceAsync(installed, values, expectedRevision, cancellationToken).ConfigureAwait(false);
+
+            var outcome = "stored";
+            if (record is { State: ModuleLifecycleState.Active, InstanceId: not null })
+            {
+                if (policy == ConfigurationRestartPolicy.Reload)
+                {
+                    var session = _supervisor.GetSession(new InstanceId(record.InstanceId))
+                        ?? throw new InvalidOperationException("Active module session is unavailable.");
+                    try
+                    {
+                        var update = await session.UpdateConfigurationAsync(ToProtocolSnapshot(snapshot), TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                        if (!update.Succeeded)
+                        {
+                            await RestartUnderGateAsync(record, installed, cancellationToken).ConfigureAwait(false);
+                            outcome = "reload-rejected-module-restarted";
+                        }
+                        else outcome = "reloaded";
+                    }
+                    catch (Exception exception) when (exception is IOException or InvalidDataException or InvalidOperationException)
+                    {
+                        await RestartUnderGateAsync(record, installed, cancellationToken).ConfigureAwait(false);
+                        outcome = "reload-failed-module-restarted";
+                    }
+                }
+                else if (policy == ConfigurationRestartPolicy.RestartModule)
+                {
+                    await RestartUnderGateAsync(record, installed, cancellationToken).ConfigureAwait(false);
+                    outcome = "module-restarted";
+                }
+                else if (policy == ConfigurationRestartPolicy.RestartTarget)
+                {
+                    outcome = "target-restart-required";
+                }
+            }
+
+            await _audit.AppendAsync("configuration.revised", moduleId.Value, "success", outcome, new Dictionary<string, string?>
+            {
+                ["revision"] = snapshot.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["schemaDigest"] = snapshot.SchemaDigest,
+                ["restartPolicy"] = policy.ToString()
+            }, cancellationToken).ConfigureAwait(false);
+            return snapshot;
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Encrypts and stores an administrator-provided secret revision.</summary>
+    /// <param name="name">The stable secret name.</param>
+    /// <param name="value">The secret bytes.</param>
+    /// <param name="expectedRevision">The revision observed by the administrator.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>Metadata for the committed secret revision.</returns>
+    public async Task<SecretVersion> PutSecretAsync(string name, ReadOnlyMemory<byte> value, long expectedRevision, CancellationToken cancellationToken = default)
+    {
+        var version = await _secretStore.PutAsync(name, value, expectedRevision, cancellationToken).ConfigureAwait(false);
+        await _audit.AppendAsync("secret.revised", name, "success", "encrypted-secret-stored", new Dictionary<string, string?>
+        {
+            ["revision"] = version.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        }, cancellationToken).ConfigureAwait(false);
+        return version;
+    }
+
+    /// <summary>Exports one declared module-owned storage namespace.</summary>
+    /// <param name="moduleId">The owning module identifier.</param>
+    /// <param name="namespaceName">The declared namespace name.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The authenticated state export, or <see langword="null"/> when the module is unknown.</returns>
+    public async Task<StateExport?> ExportStateAsync(ModuleId moduleId, string namespaceName, CancellationToken cancellationToken = default)
+    {
+        var gate = Gate(moduleId.Value);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var record = await _state.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+            if (record is null) return null;
+            var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Installed bundle is missing.");
+            var resolution = await ResolveDependenciesAsync(installed, cancellationToken).ConfigureAwait(false);
+            if (!resolution.Succeeded) throw new InvalidOperationException($"State export dependencies are unresolved: {resolution.ReasonCode}.");
+            return await _migrations.ExportAsync(installed, resolution, namespaceName, cancellationToken).ConfigureAwait(false);
+        }
+        finally { gate.Release(); }
+    }
+
+    /// <summary>Imports one Runtime-owned authenticated state export while the consumer module is disabled.</summary>
+    /// <param name="moduleId">The owning module identifier.</param>
+    /// <param name="exportId">The Runtime-generated export identifier.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns><see langword="true"/> when imported; <see langword="false"/> when the module or export is unknown.</returns>
+    public async Task<bool> ImportStateAsync(ModuleId moduleId, string exportId, CancellationToken cancellationToken = default)
+    {
+        if (exportId.Length != 32 || !exportId.All(Uri.IsHexDigit)) throw new ArgumentException("State export id is invalid.", nameof(exportId));
+        var gate = Gate(moduleId.Value);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var record = await _state.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+            var metadataPath = Path.Combine(_paths.StateExports, exportId + ".state.json");
+            var contentPath = Path.Combine(_paths.StateExports, exportId + ".state");
+            if (record is null || !File.Exists(metadataPath) || !File.Exists(contentPath)) return false;
+            if (record.State == ModuleLifecycleState.Active) throw new InvalidOperationException("State import requires the consumer module to be disabled.");
+            var stateExport = JsonSerializer.Deserialize<StateExport>(await File.ReadAllTextAsync(metadataPath, cancellationToken).ConfigureAwait(false), WebJsonOptions)
+                ?? throw new InvalidDataException("State export metadata is invalid.");
+            if (!string.Equals(stateExport.ExportId, exportId, StringComparison.Ordinal) || stateExport.ModuleId != moduleId || Path.GetFullPath(stateExport.ContentPath) != Path.GetFullPath(contentPath))
+                throw new InvalidDataException("State export metadata identity is invalid.");
+            var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Installed bundle is missing.");
+            var resolution = await ResolveDependenciesAsync(installed, cancellationToken).ConfigureAwait(false);
+            if (!resolution.Succeeded) throw new InvalidOperationException($"State import dependencies are unresolved: {resolution.ReasonCode}.");
+            await _migrations.ImportAsync(installed, resolution, stateExport, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally { gate.Release(); }
+    }
 
     /// <summary>Atomically replaces administrative bindings and reconciles pending modules.</summary>
     /// <param name="document">The untrusted binding document.</param>
@@ -274,7 +441,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
         }
         if (existing is not null && existing.BundleDigest != verified.Identity.Digest && existing.State != ModuleLifecycleState.Uninstalled)
         {
-            await QuarantineAsync(verified.StagedPath, "upgrade-requires-side-by-side-phase", "Replacing an installed bundle requires the side-by-side upgrade phase.", cancellationToken).ConfigureAwait(false);
+            await UpgradeUnderGateAsync(existing, verified, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -284,6 +451,184 @@ public sealed class RuntimeKernel : IAsyncDisposable
         var installed = await _store.InstallAsync(verified, cancellationToken).ConfigureAwait(false);
         DeleteIfStaged(verified.StagedPath);
         await ResolveAndActivateAsync(record, installed, verified, forceActivation: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task UpgradeUnderGateAsync(InstalledModuleRecord current, VerifiedBundle candidate, CancellationToken cancellationToken)
+    {
+        if (candidate.Manifest.Version.CompareTo(current.Version) <= 0)
+        {
+            await QuarantineAsync(candidate.StagedPath, "upgrade-version-not-newer", "A side-by-side upgrade must increase the module version.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (!string.Equals(candidate.Identity.Publisher, current.Publisher, StringComparison.Ordinal))
+        {
+            await QuarantineAsync(candidate.StagedPath, "upgrade-publisher-mismatch", "Module ownership cannot change during an ordinary upgrade.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        if (candidate.Manifest.Upgrade is null)
+        {
+            await QuarantineAsync(candidate.StagedPath, "upgrade-policy-missing", "The candidate does not declare a side-by-side upgrade policy.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var installed = await _store.InstallAsync(candidate, cancellationToken).ConfigureAwait(false);
+        DeleteIfStaged(candidate.StagedPath);
+        var resolution = await ResolveDependenciesAsync(installed, cancellationToken).ConfigureAwait(false);
+        if (!resolution.Succeeded)
+        {
+            await _audit.AppendAsync("module.upgrade", current.ModuleId.Value, "rejected", resolution.ReasonCode, new Dictionary<string, string?>
+            {
+                ["fromVersion"] = current.Version.ToString(),
+                ["toVersion"] = candidate.Manifest.Version.ToString(),
+                ["candidateDigest"] = candidate.Identity.Digest
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        var grant = await _grants.EvaluateAsync(candidate, cancellationToken).ConfigureAwait(false);
+        if (!grant.Granted)
+        {
+            await _audit.AppendAsync("module.upgrade", current.ModuleId.Value, "rejected", grant.ReasonCode, new Dictionary<string, string?>
+            {
+                ["fromVersion"] = current.Version.ToString(),
+                ["toVersion"] = candidate.Manifest.Version.ToString(),
+                ["candidateDigest"] = candidate.Identity.Digest
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        await _locks.WriteAsync(installed, resolution, cancellationToken).ConfigureAwait(false);
+
+        if (current.State != ModuleLifecycleState.Active || current.InstanceId is null)
+        {
+            var replacement = current with
+            {
+                Version = candidate.Manifest.Version,
+                BundleDigest = candidate.Identity.Digest,
+                Publisher = candidate.Identity.Publisher,
+                Revision = checked(current.Revision + 1),
+                UpdatedAt = _timeProvider.GetUtcNow(),
+                ReasonCode = "inactive-bundle-upgraded"
+            };
+            await SaveAndAuditAsync(replacement, "module.upgraded", "inactive-bundle-replaced", cancellationToken, current.State.ToString()).ConfigureAwait(false);
+            if (replacement.DesiredEnabled)
+            {
+                var verifying = replacement.State == ModuleLifecycleState.Verifying
+                    ? replacement
+                    : await TransitionAsync(replacement, ModuleLifecycleState.Verifying, "upgrade-reconciliation", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+                await ResolveAndActivateAsync(verifying, installed, candidate, forceActivation: true, cancellationToken).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        var priorBundle = await _store.OpenAsync(current.BundleDigest, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The prior installed bundle is missing.");
+        var priorInstance = new InstanceId(current.InstanceId);
+        IModuleGatewaySession? candidateSession = null;
+        var updating = current;
+        var migrationPhaseEntered = false;
+        try
+        {
+            var configuration = await _configuration.GetAsync(installed, cancellationToken).ConfigureAwait(false);
+            candidateSession = await _supervisor.StartAsync(installed, grant, ToProtocolSnapshot(configuration), CreateDependencySnapshot(installed, resolution), cancellationToken).ConfigureAwait(false);
+            ModuleHealth? health = null;
+            for (var attempt = 0; attempt < installed.Manifest.Health.ReadinessFailureThreshold; attempt++)
+            {
+                health = await candidateSession.ProbeHealthAsync(installed.Manifest.Health.ReadinessTimeout, cancellationToken).ConfigureAwait(false);
+                if (health.Status == ModuleHealthStatus.Ready) break;
+            }
+            if (health?.Status != ModuleHealthStatus.Ready) throw new ModuleActivationException("upgrade-readiness-failed", "Upgrade candidate did not pass readiness.");
+
+            updating = await TransitionAsync(current, ModuleLifecycleState.Updating, "upgrade-candidate-ready", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+            _pipelines.UnregisterModule(current.ModuleId, priorInstance);
+            _events.UnregisterModule(current.ModuleId, priorInstance);
+            _capabilities.Unregister(current.ModuleId, priorInstance);
+            await _supervisor.StopAsync(priorInstance, priorBundle.Manifest.Activation.DrainTimeout, cancellationToken).ConfigureAwait(false);
+
+            migrationPhaseEntered = true;
+            await _migrations.ApplyPendingAsync(installed, resolution, cancellationToken).ConfigureAwait(false);
+            var bindings = await _bindings.GetAsync(cancellationToken).ConfigureAwait(false);
+            _pipelines.RegisterModule(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, bindings);
+            _events.RegisterModule(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, grant);
+            candidateSession.SetEventPublisher(PublishFromModuleAsync);
+            candidateSession.SetSecretBroker((request, token) => _secretBroker.LeaseAsync(installed, grant, request, token));
+            candidateSession.SetDependencyInvoker(_capabilities.InvokeAsync);
+            var activation = await candidateSession.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            if (!activation.Succeeded) throw new ModuleActivationException("upgrade-activation-rejected", $"Upgrade candidate rejected activation: {activation.ErrorCode}.");
+            _capabilities.Register(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, installed.Digest);
+
+            var switched = updating with
+            {
+                Version = candidate.Manifest.Version,
+                BundleDigest = candidate.Identity.Digest,
+                Publisher = candidate.Identity.Publisher,
+                InstanceId = candidateSession.InstanceId.Value
+            };
+            var active = await TransitionAsync(switched, ModuleLifecycleState.Active, "upgrade-committed", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+            await WriteRollbackReferenceAsync(priorBundle, installed, candidate.Manifest.Upgrade.RollbackWindow, cancellationToken).ConfigureAwait(false);
+            await _audit.AppendAsync("module.upgraded", active.ModuleId.Value, "success", "side-by-side-route-switched", new Dictionary<string, string?>
+            {
+                ["fromVersion"] = current.Version.ToString(),
+                ["toVersion"] = active.Version.ToString(),
+                ["priorDigest"] = current.BundleDigest,
+                ["digest"] = active.BundleDigest,
+                ["instance"] = active.InstanceId
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            if (candidateSession is not null)
+            {
+                _pipelines.UnregisterModule(candidate.Manifest.Id, candidateSession.InstanceId);
+                _events.UnregisterModule(candidate.Manifest.Id, candidateSession.InstanceId);
+                _capabilities.Unregister(candidate.Manifest.Id, candidateSession.InstanceId);
+                await _supervisor.StopAsync(candidateSession.InstanceId, candidate.Manifest.Activation.DrainTimeout, CancellationToken.None).ConfigureAwait(false);
+            }
+            if (updating.State == ModuleLifecycleState.Updating)
+            {
+                var failed = await TransitionAsync(updating, ModuleLifecycleState.Failed, "upgrade-failed:" + FailureCode(exception), desiredEnabled: true, CancellationToken.None).ConfigureAwait(false);
+                var stateRollbackSucceeded = true;
+                if (migrationPhaseEntered)
+                {
+                    try { await _migrations.RollbackUpgradeAsync(installed, priorBundle, resolution, CancellationToken.None).ConfigureAwait(false); }
+                    catch (Exception migrationRollbackException)
+                    {
+                        stateRollbackSucceeded = false;
+                        await _audit.AppendAsync("state.migration-rollback", current.ModuleId.Value, "failure", FailureCode(migrationRollbackException), cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                if (!stateRollbackSucceeded) return;
+                try
+                {
+                    await _supervisor.StopAsync(priorInstance, priorBundle.Manifest.Activation.DrainTimeout, CancellationToken.None).ConfigureAwait(false);
+                    var priorVerified = await _verifier.VerifyAsync(priorBundle.BundlePath, CancellationToken.None).ConfigureAwait(false);
+                    var verifying = await TransitionAsync(failed, ModuleLifecycleState.Verifying, "upgrade-rollback", desiredEnabled: true, CancellationToken.None).ConfigureAwait(false);
+                    await ResolveAndActivateAsync(verifying, priorBundle, priorVerified, forceActivation: true, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception rollbackException)
+                {
+                    await _audit.AppendAsync("module.rollback", current.ModuleId.Value, "failure", FailureCode(rollbackException), cancellationToken: CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
+    private async Task WriteRollbackReferenceAsync(InstalledBundle prior, InstalledBundle current, TimeSpan rollbackWindow, CancellationToken cancellationToken)
+    {
+        var moduleDirectory = Path.Combine(_paths.Rollback, current.Manifest.Id.Value);
+        Directory.CreateDirectory(moduleDirectory);
+        var path = Path.Combine(moduleDirectory, current.Manifest.Version + ".json");
+        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        var document = JsonSerializer.Serialize(new
+        {
+            moduleId = current.Manifest.Id.Value,
+            priorVersion = prior.Manifest.Version.ToString(),
+            priorDigest = prior.Digest,
+            currentVersion = current.Manifest.Version.ToString(),
+            currentDigest = current.Digest,
+            retainUntil = _timeProvider.GetUtcNow().Add(rollbackWindow)
+        });
+        await File.WriteAllTextAsync(temporary, document, cancellationToken).ConfigureAwait(false);
+        if (File.Exists(path)) File.Replace(temporary, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+        else File.Move(temporary, path);
     }
 
     private async Task<InstalledModuleRecord> ResolveAndActivateAsync(
@@ -308,6 +653,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
             ["bindingRevision"] = resolution.CapabilityDependencies.Select(value => value.BindingRevision).DefaultIfEmpty(0).Max().ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["dependencyCount"] = (resolution.ModuleDependencies.Count + resolution.CapabilityDependencies.Count).ToString(System.Globalization.CultureInfo.InvariantCulture)
         }, cancellationToken).ConfigureAwait(false);
+        await _migrations.ApplyPendingAsync(installed, resolution, cancellationToken).ConfigureAwait(false);
         if (!forceActivation && installed.Manifest.Activation.Mode == "manual")
             return await TransitionAsync(record, ModuleLifecycleState.Disabled, "manual-activation-required", desiredEnabled: false, cancellationToken).ConfigureAwait(false);
         return await ActivateAsync(record, installed, grant, resolution, cancellationToken).ConfigureAwait(false);
@@ -319,7 +665,8 @@ public sealed class RuntimeKernel : IAsyncDisposable
         try
         {
             record = await TransitionAsync(record, ModuleLifecycleState.Starting, "process-starting", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
-            session = await _supervisor.StartAsync(installed, grant, CreateDependencySnapshot(installed, resolution), cancellationToken).ConfigureAwait(false);
+            var configuration = await _configuration.GetAsync(installed, cancellationToken).ConfigureAwait(false);
+            session = await _supervisor.StartAsync(installed, grant, ToProtocolSnapshot(configuration), CreateDependencySnapshot(installed, resolution), cancellationToken).ConfigureAwait(false);
             record = await TransitionAsync(record with { InstanceId = session.InstanceId.Value }, ModuleLifecycleState.HealthChecking, "protocol-authenticated", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
             ModuleHealth? health = null;
             for (var attempt = 0; attempt < installed.Manifest.Health.ReadinessFailureThreshold; attempt++)
@@ -332,6 +679,8 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _pipelines.RegisterModule(installed.Manifest, session.InstanceId, installed.ContentPath, bindings);
             _events.RegisterModule(installed.Manifest, session.InstanceId, installed.ContentPath, grant);
             session.SetEventPublisher(PublishFromModuleAsync);
+            session.SetSecretBroker((request, token) => _secretBroker.LeaseAsync(installed, grant, request, token));
+            session.SetDependencyInvoker(_capabilities.InvokeAsync);
             var activation = await session.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
             if (!activation.Succeeded) throw new ModuleActivationException("activation-control-rejected", $"Module activation failed: {activation.ErrorCode}.");
             _capabilities.Register(installed.Manifest, session.InstanceId, installed.ContentPath, installed.Digest);
@@ -357,6 +706,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
         var modules = new List<AvailableModule>();
         foreach (var record in records.Where(value => value.State is not (ModuleLifecycleState.Uninstalled or ModuleLifecycleState.Quarantined)))
         {
+            if (record.ModuleId == consumer.Manifest.Id && !string.Equals(record.BundleDigest, consumer.Digest, StringComparison.Ordinal)) continue;
             var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false);
             if (installed is not null)
                 modules.Add(new AvailableModule(installed.Manifest, installed.Digest, record.State == ModuleLifecycleState.Active));
@@ -364,6 +714,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
         if (modules.All(value => value.BundleDigest != consumer.Digest))
             modules.Add(new AvailableModule(consumer.Manifest, consumer.Digest, false));
         var bindings = await _bindings.GetAsync(cancellationToken).ConfigureAwait(false);
+        var configuration = await _configuration.GetAsync(consumer, cancellationToken).ConfigureAwait(false);
         return _resolver.Resolve(new DependencyResolutionRequest(
             consumer.Manifest,
             consumer.Digest,
@@ -371,7 +722,42 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _capabilities.Snapshot(),
             bindings,
             BindingScopeContext.ForModule(consumer.Manifest.Id),
-            new Dictionary<string, JsonElement>(StringComparer.Ordinal)));
+            FlattenConfiguration(configuration.Values)));
+    }
+
+    private async Task RestartUnderGateAsync(InstalledModuleRecord record, InstalledBundle installed, CancellationToken cancellationToken)
+    {
+        if (record.State != ModuleLifecycleState.Active || record.InstanceId is null) return;
+        var instance = new InstanceId(record.InstanceId);
+        var draining = await TransitionAsync(record, ModuleLifecycleState.Draining, "configuration-restart", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+        _pipelines.UnregisterModule(record.ModuleId, instance);
+        _events.UnregisterModule(record.ModuleId, instance);
+        _capabilities.Unregister(record.ModuleId, instance);
+        await _supervisor.StopAsync(instance, installed.Manifest.Activation.DrainTimeout, cancellationToken).ConfigureAwait(false);
+        var disabled = await TransitionAsync(draining, ModuleLifecycleState.Disabled, "configuration-restart", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+        var verified = await _verifier.VerifyAsync(installed.BundlePath, cancellationToken).ConfigureAwait(false);
+        var verifying = await TransitionAsync(disabled, ModuleLifecycleState.Verifying, "configuration-restart", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+        var restarted = await ResolveAndActivateAsync(verifying, installed, verified, forceActivation: true, cancellationToken).ConfigureAwait(false);
+        if (restarted.State != ModuleLifecycleState.Active)
+            throw new InvalidOperationException($"Module did not reactivate after configuration change: {restarted.ReasonCode}.");
+    }
+
+    private static ConfigurationSnapshot ToProtocolSnapshot(ModuleConfigurationSnapshot snapshot) =>
+        new(snapshot.Revision, snapshot.SchemaDigest, snapshot.Values);
+
+    private static Dictionary<string, JsonElement> FlattenConfiguration(JsonElement values)
+    {
+        var flattened = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        Visit(values, null, flattened);
+        return flattened;
+
+        static void Visit(JsonElement value, string? prefix, Dictionary<string, JsonElement> destination)
+        {
+            if (prefix is not null) destination[prefix] = value.Clone();
+            if (value.ValueKind != JsonValueKind.Object) return;
+            foreach (var property in value.EnumerateObject())
+                Visit(property.Value, prefix is null ? property.Name : prefix + "." + property.Name, destination);
+        }
     }
 
     private Task<EventEnvelope> PublishFromModuleAsync(EventEnvelope envelope, CancellationToken cancellationToken) =>
@@ -518,7 +904,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
                 }
                 catch (BundleVerificationException exception) { await TransitionAsync(failed, ModuleLifecycleState.Quarantined, exception.Code, desiredEnabled: true, cancellationToken).ConfigureAwait(false); }
             }
-            else if (record.State is ModuleLifecycleState.Starting or ModuleLifecycleState.HealthChecking or ModuleLifecycleState.Draining or ModuleLifecycleState.Installing)
+            else if (record.State is ModuleLifecycleState.Starting or ModuleLifecycleState.HealthChecking or ModuleLifecycleState.Draining or ModuleLifecycleState.Installing or ModuleLifecycleState.Updating)
                 await TransitionAsync(record, ModuleLifecycleState.Failed, "interrupted-transition-recovered", record.DesiredEnabled, cancellationToken).ConfigureAwait(false);
         }
     }

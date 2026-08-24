@@ -36,7 +36,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
     public event EventHandler<ModuleExitedEventArgs>? ModuleExited;
 
     /// <inheritdoc />
-    public async Task<IModuleGatewaySession> StartAsync(InstalledBundle bundle, PermissionDecision grant, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
+    public async Task<IModuleGatewaySession> StartAsync(InstalledBundle bundle, PermissionDecision grant, ConfigurationSnapshot configuration, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(bundle);
@@ -44,12 +44,15 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         var artifactPath = ResolveInside(bundle.ContentPath, artifact.EntryPoint);
         if (!File.Exists(artifactPath)) throw new FileNotFoundException("Selected module artifact is missing.", artifactPath);
         var instance = new InstanceId($"{SafeInstancePrefix(bundle.Manifest.Id.Value)}-{Guid.NewGuid():N}");
-        var workingDirectory = Path.Combine(_paths.ModuleData, bundle.Manifest.Id.Value, "instances", instance.Value);
+        var moduleRoot = Path.Combine(_paths.ModuleData, bundle.Manifest.Id.Value);
+        var persistentDirectory = Path.Combine(moduleRoot, "state");
+        var workingDirectory = Path.Combine(moduleRoot, "instances", instance.Value);
+        Directory.CreateDirectory(persistentDirectory);
         Directory.CreateDirectory(workingDirectory);
         var socketPath = CreateSocketPath(instance);
         var listener = new ModuleGatewayListener(socketPath);
         var proofKey = RandomNumberGenerator.GetBytes(32);
-        var startInfo = CreateStartInfo(artifactPath, workingDirectory, socketPath, bundle, artifact, instance, proofKey);
+        var startInfo = CreateStartInfo(artifactPath, workingDirectory, persistentDirectory, socketPath, bundle, artifact, instance, proofKey);
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         try
         {
@@ -80,7 +83,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             startup.CancelAfter(bundle.Manifest.Health.StartupTimeout);
-            var accept = listener.AcceptAsync(bundle, artifact, instance, process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), proofKey, grant, dependencies, startup.Token);
+            var accept = listener.AcceptAsync(bundle, artifact, instance, process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), proofKey, grant, configuration, dependencies, startup.Token);
             var exited = process.WaitForExitAsync(startup.Token);
             var completed = await Task.WhenAny(accept, exited).ConfigureAwait(false);
             if (completed == exited)
@@ -150,7 +153,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         await DisposeManagedAsync(module).ConfigureAwait(false);
     }
 
-    private static ProcessStartInfo CreateStartInfo(string artifactPath, string workingDirectory, string socketPath, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, byte[] proofKey)
+    private static ProcessStartInfo CreateStartInfo(string artifactPath, string workingDirectory, string persistentDirectory, string socketPath, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, byte[] proofKey)
     {
         var dotnetRoot = ResolveDotnetRoot();
         var start = new ProcessStartInfo
@@ -166,7 +169,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         if (OperatingSystem.IsMacOS())
         {
             start.ArgumentList.Add("-p");
-            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, socketPath, dotnetRoot));
+            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot));
             start.ArgumentList.Add(artifactPath);
         }
         start.Environment.Clear();
@@ -191,19 +194,22 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.Environment["MURCHALKA_INSTANCE_ID"] = instance.Value;
         start.Environment["MURCHALKA_CAPABILITIES_DIGEST"] = CapabilityDeclarations.ComputeDigest(bundle.Manifest, bundle.ContentPath);
         start.Environment["MURCHALKA_PROOF_KEY"] = Convert.ToBase64String(proofKey);
-        start.Environment["MURCHALKA_MODULE_DATA"] = workingDirectory;
+        start.Environment["MURCHALKA_MODULE_DATA"] = persistentDirectory;
+        start.Environment["MURCHALKA_INSTANCE_TEMP"] = workingDirectory;
         return start;
     }
 
-    private static string CreateMacSandboxProfile(string artifactPath, string contentPath, string workingDirectory, string socketPath, string dotnetRoot)
+    private static string CreateMacSandboxProfile(string artifactPath, string contentPath, string workingDirectory, string persistentDirectory, string socketPath, string dotnetRoot)
     {
         static string Literal(string value) => "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
         var logicalArtifact = Path.GetFullPath(artifactPath);
         var logicalContent = Path.GetFullPath(contentPath);
         var logicalWorking = Path.GetFullPath(workingDirectory);
+        var logicalPersistent = Path.GetFullPath(persistentDirectory);
         var logicalSocket = Path.GetFullPath(socketPath);
         var canonicalContent = ResolvePhysicalPath(contentPath);
         var canonicalWorking = ResolvePhysicalPath(workingDirectory);
+        var canonicalPersistent = ResolvePhysicalPath(persistentDirectory);
         var canonicalSocket = ResolvePhysicalPath(socketPath);
         return string.Join(' ',
             "(version 1)",
@@ -215,7 +221,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             "(allow process-info*)",
             "(allow file-read-metadata)",
             $"(allow file-read* (subpath {Literal(logicalContent)}) (subpath {Literal(canonicalContent)}) (subpath {Literal(dotnetRoot)}) (subpath \"/System\") (subpath \"/usr/lib\"))",
-            $"(allow file-write* (subpath {Literal(logicalWorking)}) (subpath {Literal(canonicalWorking)}))",
+            $"(allow file-write* (subpath {Literal(logicalWorking)}) (subpath {Literal(canonicalWorking)}) (subpath {Literal(logicalPersistent)}) (subpath {Literal(canonicalPersistent)}))",
             $"(allow network-outbound (literal {Literal(logicalSocket)}) (literal {Literal(canonicalSocket)}))");
     }
 
