@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Murchalka.Runtime.Contracts.Abstractions;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Contracts.Secrets;
+using Murchalka.Runtime.Secrets.Internal;
 
 namespace Murchalka.Runtime.Secrets.Services;
 
@@ -150,5 +151,4 @@ public sealed class EncryptedFileSecretStore : ISecretStore
         _gate.Dispose();
     }
 
-    private sealed record StoredSecret(string Name, long Revision, byte[] Nonce, byte[] Ciphertext, byte[] Tag, DateTimeOffset UpdatedAt);
 }

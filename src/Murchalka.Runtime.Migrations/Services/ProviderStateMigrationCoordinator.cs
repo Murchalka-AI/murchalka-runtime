@@ -9,6 +9,7 @@ using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Contracts.Dependencies;
 using Murchalka.Runtime.Contracts.Manifests;
 using Murchalka.Runtime.Contracts.State;
+using Murchalka.Runtime.Migrations.Internal;
 
 namespace Murchalka.Runtime.Migrations.Services;
 
@@ -365,5 +366,4 @@ public sealed class ProviderStateMigrationCoordinator : IStateMigrationCoordinat
         _gate.Dispose();
     }
 
-    private sealed record MigrationLedger(string ModuleId, string Namespace, string Version, string LastOperation, DateTimeOffset UpdatedAt);
 }

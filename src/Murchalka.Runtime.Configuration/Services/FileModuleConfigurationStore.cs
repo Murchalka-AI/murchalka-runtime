@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Json.Schema;
 using Murchalka.ModuleProtocol.Contracts;
+using Murchalka.Runtime.Configuration.Internal;
 using Murchalka.Runtime.Contracts.Abstractions;
 using Murchalka.Runtime.Contracts.Bundles;
 using Murchalka.Runtime.Contracts.Common;
@@ -197,7 +198,4 @@ public sealed class FileModuleConfigurationStore : IModuleConfigurationStore
         _gate.Dispose();
     }
 
-    private sealed record ConfigurationContract(JsonSchema Schema, string SchemaDigest, JsonObject Defaults);
-
-    private sealed record StoredConfiguration(string ModuleId, long Revision, string SchemaDigest, JsonElement Values, DateTimeOffset UpdatedAt);
 }
