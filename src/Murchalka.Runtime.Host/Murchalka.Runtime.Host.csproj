@@ -3,5 +3,8 @@
     <OutputType>Exe</OutputType>
     <Description>Murchalka Runtime host and loopback control API.</Description>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../Murchalka.Runtime.Bootstrap/Murchalka.Runtime.Bootstrap.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Murchalka.Runtime.Bootstrap/Murchalka.Runtime.Bootstrap.csproj" />
+    <PackageReference Include="Murchalka.ModuleProtocol.Json" />
+  </ItemGroup>
 </Project>

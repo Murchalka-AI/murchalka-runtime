@@ -5,15 +5,25 @@ using Murchalka.Runtime.Bootstrap.Composition;
 using Murchalka.Runtime.Contracts.Bindings;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Contracts.Configuration;
+using Murchalka.Runtime.Host.Bootstrap;
 
 var root = ReadOption(args, "--root") ?? Path.Combine(AppContext.BaseDirectory, "var");
 var url = ReadOption(args, "--url") ?? "http://127.0.0.1:5078";
+var installationId = ReadOption(args, "--installation") ?? "local";
+var bootstrapBindings = ReadOption(args, "--bootstrap-bindings");
+var bootstrapConfiguration = ReadOption(args, "--bootstrap-configuration");
 var endpoint = new Uri(url, UriKind.Absolute);
 if (endpoint.Scheme != Uri.UriSchemeHttp || !IPAddress.TryParse(endpoint.Host, out var address) || !IPAddress.IsLoopback(address))
     throw new InvalidOperationException("The Runtime control API must bind to an explicit HTTP loopback address.");
 
-await using var runtime = RuntimeBootstrap.Create(root);
+await using var runtime = RuntimeBootstrap.Create(root, installationId: installationId);
 await runtime.Kernel.StartAsync();
+await DeploymentBootstrapper.ApplyAsync(
+    runtime.Kernel,
+    bootstrapBindings,
+    bootstrapConfiguration,
+    TimeSpan.FromMinutes(2),
+    CancellationToken.None);
 
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.UseUrls(url);
@@ -29,6 +39,53 @@ app.MapGet("/v1/capabilities", () => Results.Ok(runtime.Kernel.Capabilities.Snap
     instance = value.InstanceId.Value,
     category = value.Category
 })));
+app.MapPost("/v1/capabilities/{capabilityId}/invoke", async (string capabilityId, HttpRequest request, CancellationToken cancellationToken) =>
+{
+    if (request.ContentLength is > 1_048_576)
+        return Results.Json(new { code = "request-too-large", message = "Administrative capability requests are limited to 1 MiB." }, statusCode: StatusCodes.Status413PayloadTooLarge);
+    try
+    {
+        var document = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        if (document.ValueKind != JsonValueKind.Object || !document.TryGetProperty("payload", out var payload))
+            return Results.BadRequest(new { code = "request-invalid", message = "Property 'payload' is required." });
+        var idempotencyKey = document.TryGetProperty("idempotencyKey", out var key) && key.ValueKind != JsonValueKind.Null
+            ? key.GetString()
+            : null;
+        var scope = document.TryGetProperty("scope", out var scopeElement) && scopeElement.ValueKind != JsonValueKind.Null
+            ? scopeElement.Deserialize<InvocationScope>()
+            : null;
+        var result = await runtime.Kernel.InvokeAdministrativeCapabilityAsync(
+            new CapabilityId(capabilityId),
+            payload,
+            scope,
+            idempotencyKey,
+            cancellationToken);
+        return result.Status == InvocationStatus.Succeeded
+            ? Results.Ok(result.Payload)
+            : Results.Json(new
+            {
+                code = result.Error?.Code ?? "capability-failed",
+                message = result.Error?.Message ?? "Administrative capability invocation failed.",
+                retryable = result.Error?.Retryable ?? false
+            }, statusCode: result.Error?.Category switch
+            {
+                ErrorCategory.InvalidRequest => StatusCodes.Status400BadRequest,
+                ErrorCategory.PermissionDenied => StatusCodes.Status403Forbidden,
+                ErrorCategory.NotFound => StatusCodes.Status404NotFound,
+                ErrorCategory.Conflict => StatusCodes.Status409Conflict,
+                ErrorCategory.Unavailable => StatusCodes.Status503ServiceUnavailable,
+                _ => StatusCodes.Status502BadGateway
+            });
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.NotFound(new { code = "capability-unavailable", message = exception.Message });
+    }
+    catch (Exception exception) when (exception is JsonException or InvalidDataException or InvalidOperationException or ArgumentException)
+    {
+        return Results.BadRequest(new { code = "administrative-invocation-rejected", message = exception.Message });
+    }
+});
 app.MapGet("/v1/pipelines", () =>
 {
     var snapshot = runtime.Kernel.Pipelines.Snapshot();

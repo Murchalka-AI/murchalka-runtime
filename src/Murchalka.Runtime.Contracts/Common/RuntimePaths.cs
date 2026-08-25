@@ -49,8 +49,6 @@ public sealed record RuntimePaths
     public string TrustedPublishers => Path.Combine(Configuration, "trusted-publishers.json");
     /// <summary>Gets the permission grant directory.</summary>
     public string Grants => Path.Combine(Configuration, "grants");
-    /// <summary>Gets the encrypted local secret store directory.</summary>
-    public string Secrets => Path.Combine(Configuration, "secrets");
     /// <summary>Gets the administrative binding document path.</summary>
     public string Bindings => Path.Combine(Configuration, "murchalka.bindings.yaml");
     /// <summary>Gets the revisioned per-module configuration directory.</summary>
@@ -69,7 +67,7 @@ public sealed record RuntimePaths
     /// <summary>Creates every required Runtime directory when it is absent.</summary>
     public void EnsureCreated()
     {
-        foreach (var path in new[] { Configuration, ModuleConfiguration, Secrets, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, MigrationState, StateExports, Sockets, ModuleData, Audit, Grants, Locks, EventOutbox, EventInbox, EventQuarantine })
+        foreach (var path in new[] { Configuration, ModuleConfiguration, Inbox, Staging, Installed, Active, Disabled, Quarantine, Rollback, Cache, State, MigrationState, StateExports, Sockets, ModuleData, Audit, Grants, Locks, EventOutbox, EventInbox, EventQuarantine })
             Directory.CreateDirectory(path);
     }
 }

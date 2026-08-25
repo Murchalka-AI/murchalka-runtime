@@ -15,7 +15,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsPackable>false</IsPackable>
     <RepositoryUrl>https://github.com/Murchalka-AI/murchalka-runtime</RepositoryUrl>
-    <Version>0.1.0</Version>
+    <Version>0.2.1</Version>
     <Authors>Murchalka</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
   </PropertyGroup>

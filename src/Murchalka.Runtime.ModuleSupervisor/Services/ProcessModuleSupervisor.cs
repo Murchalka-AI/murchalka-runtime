@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.Runtime.Contracts.Abstractions;
 using Murchalka.Runtime.Contracts.Bundles;
@@ -52,7 +53,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         var socketPath = CreateSocketPath(instance);
         var listener = new ModuleGatewayListener(socketPath);
         var proofKey = RandomNumberGenerator.GetBytes(32);
-        var startInfo = CreateStartInfo(artifactPath, workingDirectory, persistentDirectory, socketPath, bundle, artifact, instance, proofKey);
+        var startInfo = CreateStartInfo(artifactPath, workingDirectory, persistentDirectory, socketPath, bundle, artifact, instance, proofKey, grant);
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         try
         {
@@ -153,7 +154,16 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         await DisposeManagedAsync(module).ConfigureAwait(false);
     }
 
-    private static ProcessStartInfo CreateStartInfo(string artifactPath, string workingDirectory, string persistentDirectory, string socketPath, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, byte[] proofKey)
+    private static ProcessStartInfo CreateStartInfo(
+        string artifactPath,
+        string workingDirectory,
+        string persistentDirectory,
+        string socketPath,
+        InstalledBundle bundle,
+        RuntimeArtifact artifact,
+        InstanceId instance,
+        byte[] proofKey,
+        PermissionDecision grant)
     {
         var dotnetRoot = ResolveDotnetRoot();
         var start = new ProcessStartInfo
@@ -169,7 +179,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         if (OperatingSystem.IsMacOS())
         {
             start.ArgumentList.Add("-p");
-            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot));
+            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot, grant));
             start.ArgumentList.Add(artifactPath);
         }
         start.Environment.Clear();
@@ -199,7 +209,14 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         return start;
     }
 
-    private static string CreateMacSandboxProfile(string artifactPath, string contentPath, string workingDirectory, string persistentDirectory, string socketPath, string dotnetRoot)
+    private static string CreateMacSandboxProfile(
+        string artifactPath,
+        string contentPath,
+        string workingDirectory,
+        string persistentDirectory,
+        string socketPath,
+        string dotnetRoot,
+        PermissionDecision grant)
     {
         static string Literal(string value) => "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
         var logicalArtifact = Path.GetFullPath(artifactPath);
@@ -211,7 +228,8 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         var canonicalWorking = ResolvePhysicalPath(workingDirectory);
         var canonicalPersistent = ResolvePhysicalPath(persistentDirectory);
         var canonicalSocket = ResolvePhysicalPath(socketPath);
-        return string.Join(' ',
+        var rules = new List<string>
+        {
             "(version 1)",
             "(deny default)",
             "(import \"system.sb\")",
@@ -220,9 +238,29 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             $"(allow process-exec (literal {Literal(logicalArtifact)}) (literal {Literal(ResolvePhysicalPath(artifactPath))}))",
             "(allow process-info*)",
             "(allow file-read-metadata)",
-            $"(allow file-read* (subpath {Literal(logicalContent)}) (subpath {Literal(canonicalContent)}) (subpath {Literal(dotnetRoot)}) (subpath \"/System\") (subpath \"/usr/lib\"))",
+            $"(allow file-read* (subpath {Literal(logicalContent)}) (subpath {Literal(canonicalContent)}) (subpath {Literal(logicalWorking)}) (subpath {Literal(canonicalWorking)}) (subpath {Literal(logicalPersistent)}) (subpath {Literal(canonicalPersistent)}) (subpath {Literal(dotnetRoot)}) (subpath \"/System\") (subpath \"/usr/lib\"))",
+            $"(allow file-map-executable (subpath {Literal(logicalContent)}) (subpath {Literal(canonicalContent)}) (subpath {Literal(dotnetRoot)}) (subpath \"/System\") (subpath \"/usr/lib\"))",
             $"(allow file-write* (subpath {Literal(logicalWorking)}) (subpath {Literal(canonicalWorking)}) (subpath {Literal(logicalPersistent)}) (subpath {Literal(canonicalPersistent)}))",
-            $"(allow network-outbound (literal {Literal(logicalSocket)}) (literal {Literal(canonicalSocket)}))");
+            $"(allow network-outbound (literal {Literal(logicalSocket)}) (literal {Literal(canonicalSocket)}))"
+        };
+        rules.AddRange(CreateMacLoopbackNetworkRules(grant.Grant));
+        return string.Join(' ', rules);
+    }
+
+    private static IEnumerable<string> CreateMacLoopbackNetworkRules(JsonElement grant)
+    {
+        if (!grant.TryGetProperty("network", out var network) ||
+            !network.TryGetProperty("outbound", out var outbound) ||
+            outbound.ValueKind != JsonValueKind.Array)
+            yield break;
+        foreach (var rule in outbound.EnumerateArray())
+        {
+            if (rule.GetProperty("scheme").GetString() != "http" ||
+                rule.GetProperty("host").GetString() != "127.0.0.1")
+                continue;
+            foreach (var port in rule.GetProperty("ports").EnumerateArray())
+                yield return $"(allow network-outbound (remote ip \"localhost:{port.GetInt32()}\"))";
+        }
     }
 
     private static string ResolveDotnetRoot()

@@ -76,6 +76,12 @@ public sealed class RuntimeEndToEndTests
 
         Assert.Equal(InvocationStatus.Succeeded, result.Status);
         Assert.Equal("Hello, Murchalka!", result.Payload!.Value.GetProperty("greeting").GetString());
+        var administrativeResult = await runtime.Kernel.InvokeAdministrativeCapabilityAsync(
+            new CapabilityId("hello.greet"),
+            JsonSerializer.SerializeToElement(new { name = "Administrator" }),
+            cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(InvocationStatus.Succeeded, administrativeResult.Status);
+        Assert.Equal("Hello, Administrator!", administrativeResult.Payload!.Value.GetProperty("greeting").GetString());
         await WaitForAuditEventAsync(paths, "event.published");
         var invalidInvocation = invocation with { InvocationId = Guid.NewGuid(), Payload = JsonSerializer.SerializeToElement(new { unsupported = true }) };
         await Assert.ThrowsAsync<InvalidDataException>(() => runtime.Kernel.Capabilities.InvokeAsync(invalidInvocation, TestContext.Current.CancellationToken));

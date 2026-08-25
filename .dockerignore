@@ -1,0 +1,10 @@
+.git
+.github
+.idea
+artifacts
+bin
+obj
+TestResults
+**/bin
+**/obj
+**/.DS_Store

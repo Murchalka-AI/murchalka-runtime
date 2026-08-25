@@ -2,7 +2,7 @@
 
 ## Outcome
 
-The Runtime now provides a working product-neutral state/configuration/secrets vertical slice. Module state survives process and Runtime restart, signed migrations execute through selected providers, configuration reloads without rebuilding Runtime, and secrets are leased through Root policy rather than configuration or environment injection.
+The Runtime now provides a working product-neutral state/configuration/secrets vertical slice. Module state survives process and Runtime restart, signed migrations execute through selected providers, configuration reloads without rebuilding Runtime, and secrets are persisted through an independent provider then leased through Root policy rather than product-module configuration or environment injection.
 
 ## Repository and bundle
 

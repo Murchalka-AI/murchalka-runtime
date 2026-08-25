@@ -10,5 +10,5 @@
 - **State import:** disable the consumer, verify the target provider binding, then call `POST /v1/modules/{module}/state/import/{exportId}`. Imports from arbitrary paths or another module are rejected.
 - **Secret update:** send Base64 bytes to `PUT /v1/secrets/{name}?expectedRevision=N`. The response contains revision metadata only. Rotate dependent services, then update the secret as a new revision.
 - **Secret lease denied:** confirm the exact name exists in both manifest `permissions.secrets` and the effective signed grant, the grant is current, and the request deadline/purpose are valid. Never broaden the grant to `*` as a diagnostic shortcut.
-- **Secret master key loss:** restore `configuration/secrets/master.key` and encrypted records from the same backup generation. A mismatched key makes records undecryptable by design.
+- **Secret master key loss:** restore the `dev.murchalka.secrets-local` provider data and its externally managed key from the same backup generation. A missing or mismatched key makes records undecryptable by design.
 - **Backup:** snapshot bindings, grants, module configuration, encrypted secrets plus master key, migration ledgers, exports, stable `module-data`, immutable bundle digests and Root audit together.

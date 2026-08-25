@@ -44,4 +44,25 @@ public sealed class BindingStoreTests
         var reloaded = await store.GetAsync(TestContext.Current.CancellationToken);
         Assert.True(JsonElement.DeepEquals(BindingDocumentJson.Serialize(stored), BindingDocumentJson.Serialize(reloaded)));
     }
+
+    /// <summary>Verifies that a deployment-specific installation identifier is enforced.</summary>
+    [Fact]
+    public async Task DeploymentInstallationIdentifierIsAccepted()
+    {
+        using var directory = new TestDirectory();
+        var paths = new RuntimePaths(directory.Path);
+        using var store = new FileBindingStore(paths, "minimal-core");
+        var document = JsonSerializer.SerializeToElement(new
+        {
+            apiVersion = "bindings.murchalka.dev/v1",
+            kind = "ModuleBindings",
+            metadata = new { installation = "minimal-core", revision = 1 },
+            bindings = Array.Empty<object>(),
+            policies = new { ambiguity = "fail", missingScopedBinding = "inheritParent", providerUnavailable = "fail" }
+        });
+
+        var stored = await store.ReplaceAsync(document, 0, TestContext.Current.CancellationToken);
+
+        Assert.Equal("minimal-core", stored.Installation);
+    }
 }

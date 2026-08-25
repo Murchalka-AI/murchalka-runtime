@@ -29,9 +29,15 @@ public static class RuntimeBootstrap
     /// <param name="root">The Runtime data root.</param>
     /// <param name="timeProvider">The optional trusted time provider.</param>
     /// <param name="discoveryPollInterval">The optional inbox stability polling interval.</param>
+    /// <param name="installationId">The stable installation identifier used by deployment-owned bindings.</param>
     /// <returns>The composed Runtime application.</returns>
-    public static RuntimeApplication Create(string root, TimeProvider? timeProvider = null, TimeSpan? discoveryPollInterval = null)
+    public static RuntimeApplication Create(
+        string root,
+        TimeProvider? timeProvider = null,
+        TimeSpan? discoveryPollInterval = null,
+        string installationId = "local")
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(installationId);
         var paths = new RuntimePaths(root);
         paths.EnsureCreated();
         var clock = timeProvider ?? TimeProvider.System;
@@ -43,9 +49,9 @@ public static class RuntimeBootstrap
         var grants = new PermissionGrantStore(paths, trust, clock);
         var supervisor = new ProcessModuleSupervisor(paths);
         var capabilities = new CapabilityRegistry(supervisor, audit);
-        var bindings = new FileBindingStore(paths, "local");
+        var bindings = new FileBindingStore(paths, installationId);
         var configuration = new FileModuleConfigurationStore(paths, clock);
-        var secretStore = new EncryptedFileSecretStore(paths, clock);
+        var secretStore = new CapabilitySecretStore(capabilities, clock);
         var secretBroker = new RootSecretBroker(secretStore, audit, clock);
         var resolver = new DependencyResolver();
         var locks = new CompositionLockStore(paths, clock);

@@ -128,6 +128,56 @@ public sealed class RuntimeKernel : IAsyncDisposable
     /// <summary>Gets the durable local event fabric.</summary>
     public IEventFabric Events => _events;
 
+    /// <summary>Invokes one active capability from the loopback administrative control plane.</summary>
+    /// <param name="capabilityId">The exact capability identifier.</param>
+    /// <param name="payload">The untrusted payload validated against the provider contract.</param>
+    /// <param name="scope">The optional invocation scope.</param>
+    /// <param name="idempotencyKey">The optional stable idempotency key.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The schema-validated capability result.</returns>
+    public Task<ResultEnvelope> InvokeAdministrativeCapabilityAsync(
+        CapabilityId capabilityId,
+        JsonElement payload,
+        InvocationScope? scope = null,
+        string? idempotencyKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (idempotencyKey is { Length: > 256 } || idempotencyKey is not null && string.IsNullOrWhiteSpace(idempotencyKey))
+            throw new ArgumentException("Idempotency key must be non-empty and at most 256 characters.", nameof(idempotencyKey));
+        var providers = _capabilities.Snapshot()
+            .Where(value => value.CapabilityId == capabilityId)
+            .OrderByDescending(value => value.Version)
+            .ThenByDescending(value => value.ModuleVersion)
+            .ThenBy(value => value.ModuleId.Value, StringComparer.Ordinal)
+            .ToArray();
+        if (providers.Length == 0)
+            throw new KeyNotFoundException($"Capability '{capabilityId}' has no active provider.");
+        var selected = providers[0];
+        if (providers.Skip(1).Any(value => value.Version == selected.Version && value.ModuleVersion == selected.ModuleVersion))
+            throw new InvalidOperationException($"Capability '{capabilityId}' has multiple equally preferred providers.");
+
+        var now = _timeProvider.GetUtcNow();
+        var invocation = new InvocationEnvelope(
+            Guid.NewGuid(),
+            selected.CapabilityId,
+            selected.Version,
+            selected.InstanceId,
+            new ModuleId("dev.murchalka.runtime-admin"),
+            "root:control-api",
+            scope ?? new InvocationScope(null, null, null, null, null, null),
+            "runtime-administration",
+            "root-control-api",
+            Guid.NewGuid().ToString("N"),
+            Guid.NewGuid().ToString("N"),
+            null,
+            now.Add(selected.Timeout),
+            idempotencyKey,
+            $"{selected.CapabilityId.Value}.request@{selected.Version.Major}",
+            payload.Clone(),
+            null);
+        return _capabilities.InvokeAsync(invocation, cancellationToken);
+    }
+
     /// <summary>Starts recovery and continuous module inbox processing.</summary>
     /// <param name="cancellationToken">A token that cancels startup.</param>
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -529,6 +579,11 @@ public sealed class RuntimeKernel : IAsyncDisposable
         {
             var configuration = await _configuration.GetAsync(installed, cancellationToken).ConfigureAwait(false);
             candidateSession = await _supervisor.StartAsync(installed, grant, ToProtocolSnapshot(configuration), CreateDependencySnapshot(installed, resolution), cancellationToken).ConfigureAwait(false);
+            candidateSession.SetEventPublisher(PublishFromModuleAsync);
+            candidateSession.SetSecretBroker((request, token) => _secretBroker.LeaseAsync(installed, grant, request, token));
+            candidateSession.SetDependencyInvoker(_capabilities.InvokeAsync);
+            var activation = await candidateSession.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            if (!activation.Succeeded) throw new ModuleActivationException("upgrade-activation-rejected", $"Upgrade candidate rejected activation: {activation.ErrorCode}.");
             ModuleHealth? health = null;
             for (var attempt = 0; attempt < installed.Manifest.Health.ReadinessFailureThreshold; attempt++)
             {
@@ -548,11 +603,6 @@ public sealed class RuntimeKernel : IAsyncDisposable
             var bindings = await _bindings.GetAsync(cancellationToken).ConfigureAwait(false);
             _pipelines.RegisterModule(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, bindings);
             _events.RegisterModule(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, grant);
-            candidateSession.SetEventPublisher(PublishFromModuleAsync);
-            candidateSession.SetSecretBroker((request, token) => _secretBroker.LeaseAsync(installed, grant, request, token));
-            candidateSession.SetDependencyInvoker(_capabilities.InvokeAsync);
-            var activation = await candidateSession.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-            if (!activation.Succeeded) throw new ModuleActivationException("upgrade-activation-rejected", $"Upgrade candidate rejected activation: {activation.ErrorCode}.");
             _capabilities.Register(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, installed.Digest);
 
             var switched = updating with
@@ -668,6 +718,11 @@ public sealed class RuntimeKernel : IAsyncDisposable
             var configuration = await _configuration.GetAsync(installed, cancellationToken).ConfigureAwait(false);
             session = await _supervisor.StartAsync(installed, grant, ToProtocolSnapshot(configuration), CreateDependencySnapshot(installed, resolution), cancellationToken).ConfigureAwait(false);
             record = await TransitionAsync(record with { InstanceId = session.InstanceId.Value }, ModuleLifecycleState.HealthChecking, "protocol-authenticated", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
+            session.SetEventPublisher(PublishFromModuleAsync);
+            session.SetSecretBroker((request, token) => _secretBroker.LeaseAsync(installed, grant, request, token));
+            session.SetDependencyInvoker(_capabilities.InvokeAsync);
+            var activation = await session.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            if (!activation.Succeeded) throw new ModuleActivationException("activation-control-rejected", $"Module activation failed: {activation.ErrorCode}.");
             ModuleHealth? health = null;
             for (var attempt = 0; attempt < installed.Manifest.Health.ReadinessFailureThreshold; attempt++)
             {
@@ -678,11 +733,6 @@ public sealed class RuntimeKernel : IAsyncDisposable
             var bindings = await _bindings.GetAsync(cancellationToken).ConfigureAwait(false);
             _pipelines.RegisterModule(installed.Manifest, session.InstanceId, installed.ContentPath, bindings);
             _events.RegisterModule(installed.Manifest, session.InstanceId, installed.ContentPath, grant);
-            session.SetEventPublisher(PublishFromModuleAsync);
-            session.SetSecretBroker((request, token) => _secretBroker.LeaseAsync(installed, grant, request, token));
-            session.SetDependencyInvoker(_capabilities.InvokeAsync);
-            var activation = await session.SendControlAsync(ControlMessageKind.Activate, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-            if (!activation.Succeeded) throw new ModuleActivationException("activation-control-rejected", $"Module activation failed: {activation.ErrorCode}.");
             _capabilities.Register(installed.Manifest, session.InstanceId, installed.ContentPath, installed.Digest);
             return await TransitionAsync(record, ModuleLifecycleState.Active, "health-gate-passed", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
         }

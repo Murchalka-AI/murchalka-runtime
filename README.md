@@ -26,12 +26,12 @@ Implemented boundaries:
 - stable provider-owned data directories separated from ephemeral module instances;
 - signed linear storage migrations routed through the resolved provider, with durable ledgers and reversible upgrade rollback;
 - digest-verified state export/import that preserves module ownership and requires import while the consumer is inactive;
-- encrypted-at-rest local secrets, manifest/grant intersection, bounded leases and payload-free Root audit;
+- provider-backed secret persistence, manifest/grant intersection, bounded leases and payload-free Root audit;
 - authenticated reverse capability routing restricted to the current dependency snapshot;
 - side-by-side module upgrade health gating, route switching, rollback retention and prior-bundle recovery;
 - local HTTP diagnostics plus lifecycle, configuration, state portability and secret administration operations.
 
-The first-party SQLite `storage.records@1` provider is delivered independently in `murchalka-storage-sqlite`; it is not compiled into the Runtime. Product profile modules and remote/clustered configuration or secret backends remain later phases. Missing providers, ambiguous administrator selection, incompatible ranges, permission gaps, conflicts, cycles and irreversible failed upgrade migrations remain fail-closed.
+The first-party SQLite `storage.records@1` and local `secrets.provider@1` providers are delivered independently in `murchalka-storage-sqlite` and `murchalka-module-secrets-local`; neither is compiled into the Runtime. Product profile modules and remote or clustered providers remain later phases. Missing providers, ambiguous administrator selection, incompatible ranges, permission gaps, conflicts, cycles and irreversible failed upgrade migrations remain fail-closed.
 
 ## Build and test
 
@@ -63,6 +63,6 @@ cp configuration/trusted-publishers.json ./var/configuration/trusted-publishers.
 dotnet run --project src/Murchalka.Runtime.Host -- --root ./var
 ```
 
-The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; module configuration lives in `configuration/modules`; encrypted local secrets live in `configuration/secrets`; migration ledgers and exports live under `modules/migrations` and `modules/exports`; stable provider data lives under `module-data`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
+The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; module configuration lives in `configuration/modules`; migration ledgers and exports live under `modules/migrations` and `modules/exports`; provider-owned encrypted secret state lives under `module-data/dev.murchalka.secrets-local/state/vault`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
 
 Configuration endpoints use optimistic revisions. Secret values are accepted only as Base64 and are never returned by the administration API. State imports accept only Runtime-generated export ids and require the consumer module to be inactive. Operational procedures are documented in [`docs/operations/phase4-runbook.md`](docs/operations/phase4-runbook.md).
