@@ -1,6 +1,6 @@
 # Murchalka Runtime
 
-Phase 4 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
+Phase 5 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
 
 Implemented boundaries:
 
@@ -10,7 +10,7 @@ Implemented boundaries:
 - content-addressed immutable installation store;
 - durable lifecycle state and hash-chained Root audit;
 - out-of-process supervision over a local Unix-domain socket;
-- deny-by-default macOS process sandbox (read-only bundle, writable module data, only the private gateway socket);
+- deny-by-default Linux Bubblewrap and macOS process sandboxes, with process modules kept fail-closed on Windows until an AppContainer launcher is available;
 - authenticated Module Protocol handshake, health gate, drain and stop;
 - manifest-authoritative capability registration and invocation routing;
 - deterministic exact-module, capability, and category dependency resolution;
@@ -42,9 +42,11 @@ dotnet test --no-restore
 
 Protocol packages are resolved from GitHub Packages. Configure credentials for the `murchalka` source (for example through `NuGetPackageSourceCredentials_murchalka`) on a clean machine; no cross-repository project reference is used.
 
+Linux process modules require Bubblewrap. On Ubuntu hosts, `sudo bash scripts/prepare-linux-sandbox.sh` installs Bubblewrap, loads the restricted AppArmor user-namespace profile when required, and verifies the sandbox before Runtime tests are executed.
+
 ## CI and releases
 
-Pull requests and pushes to `main` run locked restore, formatting verification, Release build, tests and coverage on Linux, Windows and macOS. A second job publishes the portable host and verifies that it starts with zero modules and reports a healthy state. CodeQL runs for pushes, pull requests and a weekly schedule; Dependabot checks NuGet and GitHub Actions dependencies weekly.
+Pull requests and pushes to `main` run locked restore, formatting verification, Release build, tests and coverage on Linux, Windows and macOS. Linux jobs first run a real Bubblewrap self-test with the restricted AppArmor user-namespace profile. A second job publishes the portable host and verifies that it starts with zero modules and reports a healthy state. CodeQL runs for pushes, pull requests and a weekly schedule; Dependabot checks NuGet and GitHub Actions dependencies weekly.
 
 Pushing a tag in `vX.Y.Z` or `vX.Y.Z-prerelease` format runs the complete release gate, publishes the framework-dependent .NET 10 Runtime host, smoke-tests the exact published output and creates `.tar.gz` and `.zip` archives with SHA-256 checksums. The archives are attached to a generated GitHub Release. Runtime implementation projects are intentionally not published as public NuGet packages.
 

@@ -46,7 +46,7 @@ jobs:
 
       - name: Install Linux process sandbox
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: bash scripts/prepare-linux-sandbox.sh
 
       - name: Authenticate to GitHub Packages
         shell: bash
@@ -111,7 +111,7 @@ jobs:
             **/*.csproj
 
       - name: Install Linux process sandbox
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: bash scripts/prepare-linux-sandbox.sh
 
       - name: Authenticate to GitHub Packages
         shell: bash

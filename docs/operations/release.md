@@ -8,7 +8,7 @@ Protect `main` and require the three `Build and test` matrix checks, `Verify dis
 
 ## Continuous integration
 
-Pull requests and pushes to `main` perform locked dependency restore, formatting and analyzer verification, Release build, tests with coverage on Linux, Windows and macOS, and a publish smoke test. Test results, coverage and the portable Runtime output are retained as workflow artifacts for 14 days.
+Pull requests and pushes to `main` perform locked dependency restore, formatting and analyzer verification, Release build, tests with coverage on Linux, Windows and macOS, and a publish smoke test. Linux jobs install Bubblewrap, load the restricted AppArmor user-namespace profile when Ubuntu requires it, and stop before the .NET build if the real sandbox self-test fails. Test results, coverage and the portable Runtime output are retained as workflow artifacts for 14 days.
 
 CodeQL runs on pull requests, pushes to `main`, manual dispatch and its weekly schedule. Dependabot checks NuGet and GitHub Actions dependencies weekly.
 
