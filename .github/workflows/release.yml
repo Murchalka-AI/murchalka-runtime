@@ -43,6 +43,9 @@ jobs:
             Directory.Packages.props
             **/*.csproj
 
+      - name: Install Linux process sandbox
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
       - name: Validate and extract tag version
         id: version
         shell: bash
@@ -98,9 +101,13 @@ jobs:
         shell: bash
         run: |
           runtime_root="${RUNNER_TEMP}/murchalka-runtime"
+          admin_token_file="${RUNNER_TEMP}/murchalka-admin-token"
+          openssl rand -base64 32 | tr -d '\n' > "${admin_token_file}"
+          chmod 0600 "${admin_token_file}"
           dotnet artifacts/publish/Murchalka.Runtime.Host.dll \
             --root "${runtime_root}" \
-            --url http://127.0.0.1:5078 &
+            --url http://127.0.0.1:5078 \
+            --admin-token-file "${admin_token_file}" &
           runtime_pid=$!
           trap 'kill "${runtime_pid}" 2>/dev/null || true' EXIT
 

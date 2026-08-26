@@ -166,9 +166,11 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         PermissionDecision grant)
     {
         var dotnetRoot = ResolveDotnetRoot();
+        if (OperatingSystem.IsWindows())
+            throw new ModuleActivationException("windows-sandbox-unavailable", "Process modules are fail-closed on Windows until an AppContainer launcher is available.");
         var start = new ProcessStartInfo
         {
-            FileName = OperatingSystem.IsMacOS() ? "/usr/bin/sandbox-exec" : artifactPath,
+            FileName = OperatingSystem.IsMacOS() ? "/usr/bin/sandbox-exec" : "/usr/bin/bwrap",
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -179,23 +181,19 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         if (OperatingSystem.IsMacOS())
         {
             start.ArgumentList.Add("-p");
-            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot, grant));
+            start.ArgumentList.Add(CreateMacSandboxProfile(artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot, grant, bundle.Manifest));
             start.ArgumentList.Add(artifactPath);
+        }
+        else
+        {
+            if (!File.Exists(start.FileName))
+                throw new ModuleActivationException("linux-sandbox-unavailable", "Process modules require /usr/bin/bwrap and fail closed when it is unavailable.");
+            AddLinuxSandboxArguments(start, artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot, grant, bundle.Manifest);
         }
         start.Environment.Clear();
         start.Environment["DOTNET_ROOT"] = dotnetRoot;
         start.Environment[$"DOTNET_ROOT_{RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant()}"] = dotnetRoot;
         start.Environment["DOTNET_MULTILEVEL_LOOKUP"] = "0";
-        if (OperatingSystem.IsWindows())
-        {
-            var windowsDirectory = Directory.GetParent(Environment.SystemDirectory)?.FullName;
-            if (string.IsNullOrWhiteSpace(windowsDirectory))
-                throw new ModuleActivationException("windows-directory-unavailable", "The Windows installation directory could not be resolved.");
-            start.Environment["SystemRoot"] = windowsDirectory;
-            start.Environment["WINDIR"] = windowsDirectory;
-            start.Environment["TEMP"] = workingDirectory;
-            start.Environment["TMP"] = workingDirectory;
-        }
         start.Environment["MURCHALKA_SOCKET"] = socketPath;
         start.Environment["MURCHALKA_MODULE_ID"] = bundle.Manifest.Id.Value;
         start.Environment["MURCHALKA_MODULE_VERSION"] = bundle.Manifest.Version.ToString();
@@ -209,6 +207,66 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         return start;
     }
 
+    private static void AddLinuxSandboxArguments(
+        ProcessStartInfo start,
+        string artifactPath,
+        string contentPath,
+        string workingDirectory,
+        string persistentDirectory,
+        string socketPath,
+        string dotnetRoot,
+        PermissionDecision grant,
+        ModuleManifest manifest)
+    {
+        start.ArgumentList.Add("--die-with-parent");
+        start.ArgumentList.Add("--new-session");
+        start.ArgumentList.Add("--unshare-all");
+        if (HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(manifest)) start.ArgumentList.Add("--share-net");
+        AddBind(start, "--ro-bind", contentPath);
+        AddBind(start, "--bind", workingDirectory);
+        AddBind(start, "--bind", persistentDirectory);
+        AddBind(start, "--bind", Path.GetDirectoryName(socketPath) ?? throw new InvalidDataException("The module socket has no parent directory."));
+        AddBind(start, "--ro-bind", dotnetRoot);
+        foreach (var systemPath in new[] { "/usr/lib", "/lib", "/lib64", "/etc/ld.so.cache", "/etc/ssl/certs", "/usr/share/zoneinfo" })
+            if (File.Exists(systemPath) || Directory.Exists(systemPath)) AddBind(start, "--ro-bind", systemPath);
+        start.ArgumentList.Add("--proc");
+        start.ArgumentList.Add("/proc");
+        start.ArgumentList.Add("--dev");
+        start.ArgumentList.Add("/dev");
+        start.ArgumentList.Add("--tmpfs");
+        start.ArgumentList.Add("/tmp");
+        start.ArgumentList.Add("--chdir");
+        start.ArgumentList.Add(workingDirectory);
+        start.ArgumentList.Add("--");
+        start.ArgumentList.Add(artifactPath);
+    }
+
+    private static void AddBind(ProcessStartInfo start, string option, string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        start.ArgumentList.Add(option);
+        start.ArgumentList.Add(fullPath);
+        start.ArgumentList.Add(fullPath);
+    }
+
+    private static bool HasApprovedLoopbackNetwork(JsonElement grant)
+    {
+        if (!grant.TryGetProperty("network", out var network) ||
+            !network.TryGetProperty("outbound", out var outbound) ||
+            outbound.ValueKind != JsonValueKind.Array)
+            return false;
+        return outbound.EnumerateArray().Any(rule =>
+            rule.TryGetProperty("scheme", out var scheme) && scheme.GetString() == "http" &&
+            rule.TryGetProperty("host", out var host) && host.GetString() == "127.0.0.1" &&
+            rule.TryGetProperty("ports", out var ports) && ports.ValueKind == JsonValueKind.Array && ports.GetArrayLength() > 0);
+    }
+
+    private static bool HasLoopbackListener(ModuleManifest manifest) =>
+        manifest.Document.TryGetProperty("extensions", out var extensions) &&
+        extensions.TryGetProperty("dev.murchalka.client-realtime", out var realtime) &&
+        realtime.TryGetProperty("loopbackListener", out var listener) &&
+        listener.ValueKind == JsonValueKind.True;
+
     private static string CreateMacSandboxProfile(
         string artifactPath,
         string contentPath,
@@ -216,7 +274,8 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         string persistentDirectory,
         string socketPath,
         string dotnetRoot,
-        PermissionDecision grant)
+        PermissionDecision grant,
+        ModuleManifest manifest)
     {
         static string Literal(string value) => "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
         var logicalArtifact = Path.GetFullPath(artifactPath);
@@ -244,6 +303,8 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             $"(allow network-outbound (literal {Literal(logicalSocket)}) (literal {Literal(canonicalSocket)}))"
         };
         rules.AddRange(CreateMacLoopbackNetworkRules(grant.Grant));
+        if (HasLoopbackListener(manifest))
+            rules.Add("(allow network-bind (local ip \"localhost:*\"))");
         return string.Join(' ', rules);
     }
 

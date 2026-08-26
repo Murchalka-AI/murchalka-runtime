@@ -60,9 +60,11 @@ git push origin v0.1.0
 ```sh
 mkdir -p ./var/configuration
 cp configuration/trusted-publishers.json ./var/configuration/trusted-publishers.json
-dotnet run --project src/Murchalka.Runtime.Host -- --root ./var
+openssl rand -base64 32 > ./admin-token
+chmod 0600 ./admin-token
+dotnet run --project src/Murchalka.Runtime.Host -- --root ./var --admin-token-file ./admin-token
 ```
 
-The control API listens on loopback only (default `http://127.0.0.1:5078`). Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; module configuration lives in `configuration/modules`; migration ledgers and exports live under `modules/migrations` and `modules/exports`; provider-owned encrypted secret state lives under `module-data/dev.murchalka.secrets-local/state/vault`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
+The control API listens on loopback only (default `http://127.0.0.1:5078`), and every `/v1` request requires the bearer token loaded from `--admin-token-file`; `/health` remains unauthenticated for local supervision. Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; module configuration lives in `configuration/modules`; migration ledgers and exports live under `modules/migrations` and `modules/exports`; provider-owned encrypted secret state lives under `module-data/dev.murchalka.secrets-local/state/vault`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
 
 Configuration endpoints use optimistic revisions. Secret values are accepted only as Base64 and are never returned by the administration API. State imports accept only Runtime-generated export ids and require the consumer module to be inactive. Operational procedures are documented in [`docs/operations/phase4-runbook.md`](docs/operations/phase4-runbook.md).

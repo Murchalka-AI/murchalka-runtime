@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Murchalka.Runtime.Bootstrap/Murchalka.Runtime.Bootstrap.csproj" />
+    <ProjectReference Include="../../src/Murchalka.Runtime.Host/Murchalka.Runtime.Host.csproj" />
     <ProjectReference Include="../../src/Murchalka.Runtime.RootSecurity/Murchalka.Runtime.RootSecurity.csproj" />
     <ProjectReference Include="../../src/Murchalka.Runtime.ModuleDiscovery/Murchalka.Runtime.ModuleDiscovery.csproj" />
     <ProjectReference Include="../../src/Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />

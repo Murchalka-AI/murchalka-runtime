@@ -17,6 +17,7 @@ public sealed class RuntimeEndToEndTests
     [Fact]
     public async Task ActiveModuleIsReconciledAfterRuntimeRestart()
     {
+        if (OperatingSystem.IsWindows()) return;
         using var directory = new TestDirectory();
         using var bundleBuilder = new TestBundleBuilder();
         var paths = new RuntimePaths(Path.Combine(directory.Path, "runtime"));
@@ -43,6 +44,7 @@ public sealed class RuntimeEndToEndTests
     [Fact]
     public async Task DropInvokeAndDisableHelloModuleWithoutRuntimeRestart()
     {
+        if (OperatingSystem.IsWindows()) return;
         using var directory = new TestDirectory();
         using var bundleBuilder = new TestBundleBuilder();
         var runtimeRoot = Path.Combine(directory.Path, "runtime");

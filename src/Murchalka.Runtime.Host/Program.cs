@@ -6,12 +6,16 @@ using Murchalka.Runtime.Contracts.Bindings;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Contracts.Configuration;
 using Murchalka.Runtime.Host.Bootstrap;
+using Murchalka.Runtime.Host.Security;
 
 var root = ReadOption(args, "--root") ?? Path.Combine(AppContext.BaseDirectory, "var");
 var url = ReadOption(args, "--url") ?? "http://127.0.0.1:5078";
 var installationId = ReadOption(args, "--installation") ?? "local";
 var bootstrapBindings = ReadOption(args, "--bootstrap-bindings");
 var bootstrapConfiguration = ReadOption(args, "--bootstrap-configuration");
+var adminTokenPath = ReadOption(args, "--admin-token-file")
+    ?? throw new InvalidOperationException("--admin-token-file is required for the Runtime control plane.");
+using var adminToken = AdminTokenValidator.Load(adminTokenPath);
 var endpoint = new Uri(url, UriKind.Absolute);
 if (endpoint.Scheme != Uri.UriSchemeHttp || !IPAddress.TryParse(endpoint.Host, out var address) || !IPAddress.IsLoopback(address))
     throw new InvalidOperationException("The Runtime control API must bind to an explicit HTTP loopback address.");
@@ -28,6 +32,20 @@ await DeploymentBootstrapper.ApplyAsync(
 var builder = WebApplication.CreateSlimBuilder(args);
 builder.WebHost.UseUrls(url);
 var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/v1") &&
+        !adminToken.IsAuthorized(context.Request.Headers.Authorization.ToString()))
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.Headers.WWWAuthenticate = "Bearer";
+        await context.Response.WriteAsJsonAsync(new { code = "admin-authentication-required", message = "A valid administrative bearer token is required." });
+        return;
+    }
+
+    await next(context);
+});
 
 app.MapGet("/health", () => Results.Ok(new { status = "ready", runtimeVersion = RuntimeConstants.Version.ToString() }));
 app.MapGet("/v1/modules", async (CancellationToken cancellationToken) => Results.Ok(await runtime.Kernel.GetStatusAsync(cancellationToken)));
