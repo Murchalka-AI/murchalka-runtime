@@ -21,6 +21,8 @@ namespace Murchalka.Runtime.ModuleSupervisor.Services;
 /// <summary>Starts, monitors, and stops isolated out-of-process runtime modules.</summary>
 public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposable
 {
+    private const string LinuxNetworkIsolationEnvironmentVariable = "MURCHALKA_LINUX_NETWORK_ISOLATION";
+    private const string LinuxUnshareNetworkIsolation = "unshare";
     private readonly RuntimePaths _paths;
     private readonly ConcurrentDictionary<InstanceId, ManagedModule> _modules = new();
     private bool _disposed;
@@ -188,6 +190,14 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         {
             if (!File.Exists(start.FileName))
                 throw new ModuleActivationException("linux-sandbox-unavailable", "Process modules require /usr/bin/bwrap and fail closed when it is unavailable.");
+            var shareNetwork = HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(bundle.Manifest);
+            var isolateWithUnshare = !shareNetwork && UseUnshareNetworkIsolation();
+            if (isolateWithUnshare)
+            {
+                if (!File.Exists("/usr/bin/unshare"))
+                    throw new ModuleActivationException("linux-network-sandbox-unavailable", "Configured Linux network isolation requires /usr/bin/unshare.");
+                ConfigureLinuxNetworkNamespaceLauncher(start);
+            }
             AddLinuxSandboxArguments(
                 start,
                 artifactPath,
@@ -196,7 +206,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
                 persistentDirectory,
                 socketPath,
                 dotnetRoot,
-                HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(bundle.Manifest));
+                shareNetwork || isolateWithUnshare);
         }
         start.Environment.Clear();
         start.Environment["DOTNET_ROOT"] = dotnetRoot;
@@ -229,6 +239,8 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.ArgumentList.Add("--new-session");
         start.ArgumentList.Add("--unshare-all");
         if (shareNetwork) start.ArgumentList.Add("--share-net");
+        start.ArgumentList.Add("--cap-drop");
+        start.ArgumentList.Add("ALL");
         // Bubblewrap applies mounts in argument order. Create the private /tmp first so
         // explicit bundle, state, and socket binds below remain visible when hosted there.
         start.ArgumentList.Add("--tmpfs");
@@ -248,6 +260,26 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.ArgumentList.Add(workingDirectory);
         start.ArgumentList.Add("--");
         start.ArgumentList.Add(artifactPath);
+    }
+
+    internal static void ConfigureLinuxNetworkNamespaceLauncher(ProcessStartInfo start)
+    {
+        start.FileName = "/usr/bin/unshare";
+        start.ArgumentList.Add("--user");
+        start.ArgumentList.Add("--map-root-user");
+        start.ArgumentList.Add("--net");
+        start.ArgumentList.Add("--");
+        start.ArgumentList.Add("/usr/bin/bwrap");
+    }
+
+    private static bool UseUnshareNetworkIsolation()
+    {
+        var mode = Environment.GetEnvironmentVariable(LinuxNetworkIsolationEnvironmentVariable);
+        if (string.IsNullOrEmpty(mode)) return false;
+        if (string.Equals(mode, LinuxUnshareNetworkIsolation, StringComparison.Ordinal)) return true;
+        throw new ModuleActivationException(
+            "linux-network-sandbox-mode-invalid",
+            $"Environment variable {LinuxNetworkIsolationEnvironmentVariable} has unsupported value '{mode}'.");
     }
 
     private static void AddBind(ProcessStartInfo start, string option, string path)

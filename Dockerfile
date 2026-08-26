@@ -2,7 +2,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0.101 AS build
 WORKDIR /src
 COPY . .
-ARG VERSION=0.2.5
+ARG VERSION=0.2.13
 ARG NUGET_USERNAME
 RUN --mount=type=secret,id=nuget_token \
     cp NuGet.Config /tmp/NuGet.Config && \
@@ -22,7 +22,7 @@ RUN --mount=type=secret,id=nuget_token \
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.1
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap util-linux && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build --chown=$APP_UID:$APP_UID /out/ .
 RUN mkdir -p /var/lib/murchalka/configuration/grants /var/lib/murchalka/modules/inbox && \

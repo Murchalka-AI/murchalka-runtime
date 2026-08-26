@@ -42,7 +42,7 @@ dotnet test --no-restore
 
 Protocol packages are resolved from GitHub Packages. Configure credentials for the `murchalka` source (for example through `NuGetPackageSourceCredentials_murchalka`) on a clean machine; no cross-repository project reference is used.
 
-Linux process modules require Bubblewrap. On Ubuntu hosts, `sudo bash scripts/prepare-linux-sandbox.sh` installs Bubblewrap, loads the restricted AppArmor user-namespace profile when required, and verifies the sandbox before Runtime tests are executed.
+Linux process modules require Bubblewrap. On Ubuntu hosts, `sudo bash scripts/prepare-linux-sandbox.sh` installs Bubblewrap, loads the restricted AppArmor user-namespace profile when required, and verifies the sandbox before Runtime tests are executed. Nested container deployments may set `MURCHALKA_LINUX_NETWORK_ISOLATION=unshare`; modules without network permission are then placed in an empty unprivileged network namespace before Bubblewrap starts, avoiding any requirement for container `NET_ADMIN` or privileged mode.
 
 ## CI and releases
 

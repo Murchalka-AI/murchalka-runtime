@@ -36,6 +36,36 @@ public sealed class LinuxSandboxArgumentTests
         Assert.True(temporaryFileSystem < FindBind(arguments, working));
         Assert.True(temporaryFileSystem < FindBind(arguments, persistent));
         Assert.True(temporaryFileSystem < FindBind(arguments, Path.GetDirectoryName(socket)!));
+        var capabilityDrop = Array.IndexOf(arguments, "--cap-drop");
+        Assert.True(capabilityDrop >= 0);
+        Assert.Equal("ALL", arguments[capabilityDrop + 1]);
+    }
+
+    /// <summary>Verifies that the rootless launcher creates an empty outer network namespace without granting container capabilities.</summary>
+    [Fact]
+    public void RootlessNetworkLauncherWrapsBubblewrap()
+    {
+        var start = new ProcessStartInfo { FileName = "/usr/bin/bwrap" };
+
+        ProcessModuleSupervisor.ConfigureLinuxNetworkNamespaceLauncher(start);
+        ProcessModuleSupervisor.AddLinuxSandboxArguments(
+            start,
+            "/bundle/module",
+            "/bundle",
+            "/runtime/instance",
+            "/runtime/state",
+            "/runtime/sockets/module.sock",
+            "/usr/share/dotnet",
+            shareNetwork: true);
+
+        Assert.Equal("/usr/bin/unshare", start.FileName);
+        Assert.Equal(
+            ["--user", "--map-root-user", "--net", "--", "/usr/bin/bwrap"],
+            start.ArgumentList.Take(5).ToArray());
+        Assert.Contains("--share-net", start.ArgumentList);
+        var capabilityDrop = start.ArgumentList.IndexOf("--cap-drop");
+        Assert.True(capabilityDrop >= 0);
+        Assert.Equal("ALL", start.ArgumentList[capabilityDrop + 1]);
     }
 
     private static int FindBind(string[] arguments, string source)
