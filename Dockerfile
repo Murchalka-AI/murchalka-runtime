@@ -2,7 +2,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0.101 AS build
 WORKDIR /src
 COPY . .
-ARG VERSION=0.2.4
+ARG VERSION=0.2.5
 ARG NUGET_USERNAME
 RUN --mount=type=secret,id=nuget_token \
     cp NuGet.Config /tmp/NuGet.Config && \

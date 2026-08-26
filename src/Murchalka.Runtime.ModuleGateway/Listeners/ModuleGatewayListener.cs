@@ -8,6 +8,7 @@ using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Contracts.Manifests;
 using Murchalka.Runtime.Contracts.Permissions;
 using Murchalka.Runtime.ModuleGateway.Protocol;
+using Murchalka.Runtime.ModuleGateway.Security;
 using Murchalka.Runtime.ModuleGateway.Sessions;
 
 namespace Murchalka.Runtime.ModuleGateway.Listeners;
@@ -36,14 +37,14 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
     /// <param name="bundle">The installed bundle being started.</param>
     /// <param name="artifact">The selected runtime artifact.</param>
     /// <param name="expectedInstance">The expected module instance identifier.</param>
-    /// <param name="expectedProcessIdentity">The expected operating-system process identity.</param>
+    /// <param name="expectedProcessId">The operating-system process identifier of the launched sandbox.</param>
     /// <param name="proofKey">The ephemeral key used to authenticate the launched process.</param>
     /// <param name="grant">The permission grant supplied to the module.</param>
     /// <param name="configuration">The validated configuration supplied to the module.</param>
     /// <param name="dependencies">The resolved dependency endpoints supplied to the module.</param>
     /// <param name="cancellationToken">A token that cancels the accept operation.</param>
     /// <returns>An authenticated module gateway session.</returns>
-    public async Task<ModuleGatewaySession> AcceptAsync(InstalledBundle bundle, RuntimeArtifact artifact, InstanceId expectedInstance, string expectedProcessIdentity, ReadOnlyMemory<byte> proofKey, PermissionDecision grant, ConfigurationSnapshot configuration, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
+    public async Task<ModuleGatewaySession> AcceptAsync(InstalledBundle bundle, RuntimeArtifact artifact, InstanceId expectedInstance, int expectedProcessId, ReadOnlyMemory<byte> proofKey, PermissionDecision grant, ConfigurationSnapshot configuration, DependencyEndpointsSnapshot dependencies, CancellationToken cancellationToken)
     {
         var socket = await _listener.AcceptAsync(cancellationToken).ConfigureAwait(false);
         var stream = new NetworkStream(socket, ownsSocket: true);
@@ -53,7 +54,13 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
             RequireKind(helloFrame, "moduleHello");
             var hello = GatewayFrameCodec.PayloadAs<ModuleHello>(helloFrame);
             var capabilityDigest = CapabilityDeclarations.ComputeDigest(bundle.Manifest, bundle.ContentPath);
-            ValidateHello(hello, bundle, artifact, expectedInstance, expectedProcessIdentity, capabilityDigest);
+            var processIdentityMatches = OperatingSystem.IsLinux()
+                ? LinuxProcessIdentityVerifier.Matches(socket, expectedProcessId, hello.ProcessIdentity)
+                : string.Equals(
+                    hello.ProcessIdentity,
+                    expectedProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal);
+            ValidateHello(hello, bundle, artifact, expectedInstance, processIdentityMatches, capabilityDigest);
             var now = DateTimeOffset.UtcNow;
             var challenge = new RuntimeChallenge(RuntimeConstants.ProtocolVersion, Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)), hello.Nonce, "hmac-sha256", now, now.AddMinutes(1));
             await GatewayFrameCodec.WriteAsync(stream, "runtimeChallenge", challenge, cancellationToken).ConfigureAwait(false);
@@ -75,11 +82,11 @@ public sealed class ModuleGatewayListener : IAsyncDisposable
         catch { await stream.DisposeAsync().ConfigureAwait(false); throw; }
     }
 
-    private static void ValidateHello(ModuleHello hello, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, string processIdentity, string capabilitiesDigest)
+    private static void ValidateHello(ModuleHello hello, InstalledBundle bundle, RuntimeArtifact artifact, InstanceId instance, bool processIdentityMatches, string capabilitiesDigest)
     {
         if (hello.ModuleId != bundle.Manifest.Id || hello.ModuleVersion != bundle.Manifest.Version || hello.BundleDigest != bundle.Digest || hello.InstanceId != instance ||
             !hello.ProtocolVersions.Contains(RuntimeConstants.ProtocolVersion) || hello.ArtifactId != artifact.Id || hello.Target != ModuleTarget.Runtime ||
-            hello.ProcessIdentity != processIdentity || hello.DeclaredCapabilitiesDigest != capabilitiesDigest)
+            !processIdentityMatches || hello.DeclaredCapabilitiesDigest != capabilitiesDigest)
             throw new ProtocolNegotiationException("module-hello-mismatch", "ModuleHello does not match the verified bundle or launched process identity.");
     }
 

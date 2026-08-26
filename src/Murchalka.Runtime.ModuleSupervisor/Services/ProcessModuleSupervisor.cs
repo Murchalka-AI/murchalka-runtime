@@ -84,7 +84,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         {
             using var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             startup.CancelAfter(bundle.Manifest.Health.StartupTimeout);
-            var accept = listener.AcceptAsync(bundle, artifact, instance, process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture), proofKey, grant, configuration, dependencies, startup.Token);
+            var accept = listener.AcceptAsync(bundle, artifact, instance, process.Id, proofKey, grant, configuration, dependencies, startup.Token);
             var exited = process.WaitForExitAsync(startup.Token);
             var completed = await Task.WhenAny(accept, exited).ConfigureAwait(false);
             if (completed == exited)
