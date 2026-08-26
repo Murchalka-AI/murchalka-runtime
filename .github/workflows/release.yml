@@ -69,6 +69,14 @@ jobs:
             echo "prerelease=false" >> "${GITHUB_OUTPUT}"
           fi
 
+      - name: Validate release metadata
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          metadata_version="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' Directory.Build.props)"
+          test "${metadata_version}" = "${RELEASE_VERSION}"
+
       - name: Authenticate to GitHub Packages
         shell: bash
         env:
@@ -82,6 +90,9 @@ jobs:
 
       - name: Restore dependencies
         run: dotnet restore Murchalka.Runtime.slnx --configfile NuGet.Config
+
+      - name: Verify formatting
+        run: dotnet format Murchalka.Runtime.slnx --verify-no-changes --no-restore
 
       - name: Build release
         run: >-

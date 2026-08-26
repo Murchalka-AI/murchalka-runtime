@@ -105,6 +105,27 @@ public sealed class RuntimeEndToEndTests
         Assert.Empty(HashChainedRootAudit.Verify(Path.Combine(paths.Audit, "root-audit.jsonl")));
     }
 
+    /// <summary>Verifies that the startup inbox barrier waits for discovered bundle activation.</summary>
+    [Fact]
+    public async Task WaitForInboxIdleCompletesAfterDiscoveredBundlesAreProcessed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var directory = new TestDirectory();
+        using var bundleBuilder = new TestBundleBuilder();
+        var paths = new RuntimePaths(Path.Combine(directory.Path, "runtime"));
+        bundleBuilder.WriteTrust(paths);
+        var bundle = bundleBuilder.Build(Path.Combine(directory.Path, "bundle"));
+        File.Copy(bundle.Path, Path.Combine(paths.Inbox, "hello.murchalka"));
+        await using var runtime = RuntimeBootstrap.Create(paths.Root, discoveryPollInterval: TimeSpan.FromMilliseconds(20));
+
+        await runtime.Kernel.StartAsync(TestContext.Current.CancellationToken);
+        await runtime.Kernel.WaitForInboxIdleAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+
+        var status = Assert.Single(await runtime.Kernel.GetStatusAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(ModuleLifecycleState.Active, status.State);
+        Assert.Single(runtime.Kernel.Capabilities.Snapshot());
+    }
+
     /// <summary>Verifies default-deny outcomes for permissions and unresolved dependencies.</summary>
     /// <param name="requestsPermission">Whether the test bundle requests a privileged permission.</param>
     /// <param name="requiresDependency">Whether the test bundle declares a missing dependency.</param>

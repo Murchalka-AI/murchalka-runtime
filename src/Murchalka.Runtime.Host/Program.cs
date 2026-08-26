@@ -22,6 +22,7 @@ if (endpoint.Scheme != Uri.UriSchemeHttp || !IPAddress.TryParse(endpoint.Host, o
 
 await using var runtime = RuntimeBootstrap.Create(root, installationId: installationId);
 await runtime.Kernel.StartAsync();
+await runtime.Kernel.WaitForInboxIdleAsync(TimeSpan.FromMinutes(2));
 await DeploymentBootstrapper.ApplyAsync(
     runtime.Kernel,
     bootstrapBindings,

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using Murchalka.ModuleProtocol.Contracts;
+using Murchalka.ModuleProtocol.Json;
 using Murchalka.Runtime.Contracts.Abstractions;
 using Murchalka.Runtime.Contracts.Secrets;
 using Murchalka.Runtime.ModuleGateway.Protocol;
@@ -66,7 +67,7 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     public async Task<ControlResult> UpdateDependenciesAsync(DependencyEndpointsSnapshot snapshot, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var data = JsonSerializer.SerializeToElement(snapshot);
+        var data = JsonSerializer.SerializeToElement(snapshot, ProtocolJson.Options);
         var result = await SendControlAsync(new ControlMessage(Guid.NewGuid().ToString("N"), ControlMessageKind.UpdateBindings, DateTimeOffset.UtcNow.Add(timeout), data), cancellationToken).ConfigureAwait(false);
         if (result.Succeeded) Volatile.Write(ref _dependencies, snapshot);
         return result;
@@ -76,7 +77,7 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     public Task<ControlResult> UpdateConfigurationAsync(ConfigurationSnapshot snapshot, TimeSpan timeout, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
-        var data = JsonSerializer.SerializeToElement(snapshot);
+        var data = JsonSerializer.SerializeToElement(snapshot, ProtocolJson.Options);
         return SendControlAsync(new ControlMessage(Guid.NewGuid().ToString("N"), ControlMessageKind.ReloadConfiguration, DateTimeOffset.UtcNow.Add(timeout), data), cancellationToken);
     }
 
@@ -191,7 +192,7 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
                     try
                     {
                         var lease = await _secretBroker(request, cancellationToken).ConfigureAwait(false);
-                        result = new ControlResult(request.OperationId, true, null, null, JsonSerializer.SerializeToElement(lease));
+                        result = new ControlResult(request.OperationId, true, null, null, JsonSerializer.SerializeToElement(lease, ProtocolJson.Options));
                     }
                     catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                     {
@@ -281,7 +282,7 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
                 try
                 {
                     var published = await _eventPublisher(envelope, cancellationToken).ConfigureAwait(false);
-                    result = new ControlResult(envelope.EventId.ToString("D"), true, null, null, JsonSerializer.SerializeToElement(published));
+                    result = new ControlResult(envelope.EventId.ToString("D"), true, null, null, JsonSerializer.SerializeToElement(published, ProtocolJson.Options));
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {

@@ -58,6 +58,9 @@ public sealed class ModuleDirectoryWatcher : IAsyncDisposable
     /// <returns>An asynchronous sequence of staged bundle paths.</returns>
     public IAsyncEnumerable<string> ReadStagedAsync(CancellationToken cancellationToken) => _staged.Reader.ReadAllAsync(cancellationToken);
 
+    /// <summary>Gets whether bundle stabilization or staged delivery work remains pending.</summary>
+    public bool HasPendingWork => !_pending.IsEmpty || _staged.Reader.Count > 0;
+
     private void OnCandidate(object sender, FileSystemEventArgs args) => Queue(args.FullPath);
     private void OnRenamed(object sender, RenamedEventArgs args) => Queue(args.FullPath);
     private void OnError(object sender, ErrorEventArgs args)

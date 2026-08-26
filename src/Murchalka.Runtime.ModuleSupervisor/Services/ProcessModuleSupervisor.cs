@@ -192,12 +192,12 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             if (!File.Exists(start.FileName))
                 throw new ModuleActivationException("linux-sandbox-unavailable", "Process modules require /usr/bin/bwrap and fail closed when it is unavailable.");
             var shareNetwork = HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(bundle.Manifest);
-            var isolateWithNamespaceLauncher = !shareNetwork && UseNetworkNamespaceLauncher();
-            if (isolateWithNamespaceLauncher)
+            var useNamespaceLauncher = UseNetworkNamespaceLauncher();
+            if (useNamespaceLauncher)
             {
                 if (!File.Exists(LinuxNetworkNamespaceLauncher))
                     throw new ModuleActivationException("linux-network-sandbox-unavailable", $"Configured Linux network isolation requires {LinuxNetworkNamespaceLauncher}.");
-                ConfigureLinuxNetworkNamespaceLauncher(start);
+                ConfigureLinuxNetworkNamespaceLauncher(start, shareNetwork);
             }
             AddLinuxSandboxArguments(
                 start,
@@ -208,7 +208,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
                 socketPath,
                 dotnetRoot,
                 shareNetwork,
-                reusePrecreatedUserAndNetworkNamespaces: isolateWithNamespaceLauncher);
+                reusePrecreatedUserNamespace: useNamespaceLauncher);
         }
         start.Environment.Clear();
         start.Environment["DOTNET_ROOT"] = dotnetRoot;
@@ -236,11 +236,11 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         string socketPath,
         string dotnetRoot,
         bool shareNetwork,
-        bool reusePrecreatedUserAndNetworkNamespaces = false)
+        bool reusePrecreatedUserNamespace = false)
     {
         start.ArgumentList.Add("--die-with-parent");
         start.ArgumentList.Add("--new-session");
-        if (reusePrecreatedUserAndNetworkNamespaces)
+        if (reusePrecreatedUserNamespace)
         {
             start.ArgumentList.Add("--unshare-ipc");
             start.ArgumentList.Add("--unshare-pid");
@@ -274,9 +274,10 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.ArgumentList.Add(artifactPath);
     }
 
-    internal static void ConfigureLinuxNetworkNamespaceLauncher(ProcessStartInfo start)
+    internal static void ConfigureLinuxNetworkNamespaceLauncher(ProcessStartInfo start, bool shareNetwork = false)
     {
         start.FileName = LinuxNetworkNamespaceLauncher;
+        if (shareNetwork) start.ArgumentList.Add("--share-net");
         start.ArgumentList.Add("/usr/bin/bwrap");
     }
 

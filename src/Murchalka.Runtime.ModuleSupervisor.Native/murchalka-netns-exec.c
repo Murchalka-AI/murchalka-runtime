@@ -86,9 +86,16 @@ static int wait_for_child(pid_t process_id)
 
 int main(int argument_count, char **arguments)
 {
-    if (argument_count < 2)
+    int program_index = 1;
+    int share_network = 0;
+    if (argument_count > 1 && strcmp(arguments[1], "--share-net") == 0)
     {
-        fprintf(stderr, "usage: murchalka-netns-exec PROGRAM [ARGUMENT...]\n");
+        share_network = 1;
+        program_index = 2;
+    }
+    if (argument_count <= program_index)
+    {
+        fprintf(stderr, "usage: murchalka-netns-exec [--share-net] PROGRAM [ARGUMENT...]\n");
         return 2;
     }
 
@@ -119,7 +126,9 @@ int main(int argument_count, char **arguments)
             fprintf(stderr, "murchalka-netns-exec: parent-death protection failed\n");
             _exit(EXIT_FAILURE);
         }
-        if (unshare(CLONE_NEWUSER | CLONE_NEWNET) < 0)
+        int namespace_flags = CLONE_NEWUSER;
+        if (!share_network) namespace_flags |= CLONE_NEWNET;
+        if (unshare(namespace_flags) < 0)
         {
             fprintf(stderr, "murchalka-netns-exec: namespace creation failed: %s\n", strerror(errno));
             _exit(EXIT_FAILURE);
@@ -141,7 +150,7 @@ int main(int argument_count, char **arguments)
             _exit(EXIT_FAILURE);
         }
 
-        execv(arguments[1], &arguments[1]);
+        execv(arguments[program_index], &arguments[program_index]);
         fprintf(stderr, "murchalka-netns-exec: exec failed: %s\n", strerror(errno));
         _exit(127);
     }

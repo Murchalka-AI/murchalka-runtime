@@ -57,7 +57,7 @@ public sealed class LinuxSandboxArgumentTests
             "/runtime/sockets/module.sock",
             "/usr/share/dotnet",
             shareNetwork: false,
-            reusePrecreatedUserAndNetworkNamespaces: true);
+            reusePrecreatedUserNamespace: true);
 
         Assert.Equal("/usr/local/libexec/murchalka-netns-exec", start.FileName);
         Assert.Equal("/usr/bin/bwrap", start.ArgumentList[0]);
@@ -73,6 +73,34 @@ public sealed class LinuxSandboxArgumentTests
         var capabilityDrop = start.ArgumentList.IndexOf("--cap-drop");
         Assert.True(capabilityDrop >= 0);
         Assert.Equal("ALL", start.ArgumentList[capabilityDrop + 1]);
+    }
+
+    /// <summary>Verifies that an approved shared network keeps the outer namespace while retaining the sandbox launcher.</summary>
+    [Fact]
+    public void RootlessNetworkLauncherCanPreserveApprovedLoopbackNetwork()
+    {
+        var start = new ProcessStartInfo { FileName = "/usr/bin/bwrap" };
+
+        ProcessModuleSupervisor.ConfigureLinuxNetworkNamespaceLauncher(start, shareNetwork: true);
+        ProcessModuleSupervisor.AddLinuxSandboxArguments(
+            start,
+            "/bundle/module",
+            "/bundle",
+            "/runtime/instance",
+            "/runtime/state",
+            "/runtime/sockets/module.sock",
+            "/usr/share/dotnet",
+            shareNetwork: true,
+            reusePrecreatedUserNamespace: true);
+
+        Assert.Equal("/usr/local/libexec/murchalka-netns-exec", start.FileName);
+        Assert.Equal("--share-net", start.ArgumentList[0]);
+        Assert.Equal("/usr/bin/bwrap", start.ArgumentList[1]);
+        Assert.DoesNotContain("--unshare-all", start.ArgumentList);
+        Assert.DoesNotContain("--share-net", start.ArgumentList.Skip(1));
+        Assert.Contains("--unshare-ipc", start.ArgumentList);
+        Assert.Contains("--unshare-pid", start.ArgumentList);
+        Assert.Contains("--unshare-uts", start.ArgumentList);
     }
 
     private static int FindBind(string[] arguments, string source)

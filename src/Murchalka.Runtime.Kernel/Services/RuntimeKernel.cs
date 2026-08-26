@@ -69,6 +69,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _reconciliation = new(1, 1);
     private Task? _processing;
+    private int _activeInboxOperations;
     private bool _started;
 
     /// <summary>Creates the runtime orchestration kernel.</summary>
@@ -190,6 +191,35 @@ public sealed class RuntimeKernel : IAsyncDisposable
         await RecoverAsync(cancellationToken).ConfigureAwait(false);
         _watcher.Start();
         _processing = ProcessInboxAsync(_shutdown.Token);
+    }
+
+    /// <summary>Waits until every bundle currently discovered in the module inbox has finished processing.</summary>
+    /// <param name="timeout">The maximum time to wait for the inbox to become idle.</param>
+    /// <param name="cancellationToken">A token that cancels the wait.</param>
+    /// <returns>A task that completes when no discovery or bundle-processing work remains.</returns>
+    public async Task WaitForInboxIdleAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        if (!_started) throw new InvalidOperationException("Runtime kernel must be started before waiting for the module inbox.");
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        var deadline = _timeProvider.GetUtcNow().Add(timeout);
+        var consecutiveIdleObservations = 0;
+        while (_timeProvider.GetUtcNow() < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_watcher.HasPendingWork && Volatile.Read(ref _activeInboxOperations) == 0)
+            {
+                consecutiveIdleObservations++;
+                if (consecutiveIdleObservations >= 3) return;
+            }
+            else
+            {
+                consecutiveIdleObservations = 0;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), _timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException("The module inbox did not become idle before the timeout elapsed.");
     }
 
     /// <summary>Gets the persisted status of every known module.</summary>
@@ -438,7 +468,11 @@ public sealed class RuntimeKernel : IAsyncDisposable
         try
         {
             await foreach (var staged in _watcher.ReadStagedAsync(cancellationToken).ConfigureAwait(false))
-                await ProcessStagedAsync(staged, cancellationToken).ConfigureAwait(false);
+            {
+                Interlocked.Increment(ref _activeInboxOperations);
+                try { await ProcessStagedAsync(staged, cancellationToken).ConfigureAwait(false); }
+                finally { Interlocked.Decrement(ref _activeInboxOperations); }
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
