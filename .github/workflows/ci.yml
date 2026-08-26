@@ -48,6 +48,13 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/prepare-linux-sandbox.sh
 
+      - name: Compile native network namespace launcher
+        if: runner.os == 'Linux'
+        run: >-
+          gcc -std=c17 -O2 -Wall -Wextra -Werror -pedantic
+          src/Murchalka.Runtime.ModuleSupervisor.Native/murchalka-netns-exec.c
+          -o "${RUNNER_TEMP}/murchalka-netns-exec"
+
       - name: Authenticate to GitHub Packages
         shell: bash
         env:

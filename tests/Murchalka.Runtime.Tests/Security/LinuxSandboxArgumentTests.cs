@@ -58,10 +58,8 @@ public sealed class LinuxSandboxArgumentTests
             "/usr/share/dotnet",
             shareNetwork: true);
 
-        Assert.Equal("/usr/bin/unshare", start.FileName);
-        Assert.Equal(
-            ["--user", "--map-root-user", "--net", "--", "/usr/bin/bwrap"],
-            start.ArgumentList.Take(5).ToArray());
+        Assert.Equal("/usr/local/libexec/murchalka-netns-exec", start.FileName);
+        Assert.Equal("/usr/bin/bwrap", start.ArgumentList[0]);
         Assert.Contains("--share-net", start.ArgumentList);
         var capabilityDrop = start.ArgumentList.IndexOf("--cap-drop");
         Assert.True(capabilityDrop >= 0);

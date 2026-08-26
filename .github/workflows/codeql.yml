@@ -25,8 +25,12 @@ env:
 
 jobs:
   analyze:
-    name: Analyze C#
+    name: Analyze ${{ matrix.language }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [csharp, c-cpp]
 
     steps:
       - name: Check out repository
@@ -35,6 +39,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up .NET SDK
+        if: matrix.language == 'csharp'
         uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
@@ -44,6 +49,7 @@ jobs:
             **/*.csproj
 
       - name: Authenticate to GitHub Packages
+        if: matrix.language == 'csharp'
         shell: bash
         env:
           PACKAGE_TOKEN: ${{ github.token }}
@@ -57,16 +63,25 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: csharp
+          languages: ${{ matrix.language }}
           build-mode: manual
 
       - name: Restore dependencies
+        if: matrix.language == 'csharp'
         run: dotnet restore Murchalka.Runtime.slnx --configfile NuGet.Config
 
-      - name: Build for analysis
+      - name: Build C# for analysis
+        if: matrix.language == 'csharp'
         run: dotnet build Murchalka.Runtime.slnx --configuration Release --no-restore
+
+      - name: Build native launcher for analysis
+        if: matrix.language == 'c-cpp'
+        run: >-
+          gcc -std=c17 -O2 -Wall -Wextra -Werror -pedantic
+          src/Murchalka.Runtime.ModuleSupervisor.Native/murchalka-netns-exec.c
+          -o "${RUNNER_TEMP}/murchalka-netns-exec"
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: /language:csharp
+          category: /language:${{ matrix.language }}

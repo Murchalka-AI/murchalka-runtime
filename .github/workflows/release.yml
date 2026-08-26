@@ -46,6 +46,12 @@ jobs:
       - name: Install Linux process sandbox
         run: bash scripts/prepare-linux-sandbox.sh
 
+      - name: Compile native network namespace launcher
+        run: >-
+          gcc -std=c17 -O2 -Wall -Wextra -Werror -pedantic
+          src/Murchalka.Runtime.ModuleSupervisor.Native/murchalka-netns-exec.c
+          -o "${RUNNER_TEMP}/murchalka-netns-exec"
+
       - name: Validate and extract tag version
         id: version
         shell: bash
