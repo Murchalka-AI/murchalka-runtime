@@ -58,10 +58,10 @@ static int write_process_file(pid_t process_id, const char *name, const char *co
     return result;
 }
 
-static int write_id_map(pid_t process_id, const char *name, unsigned int identifier)
+static int write_root_id_map(pid_t process_id, const char *name, unsigned int outer_identifier)
 {
     char mapping[64];
-    int mapping_length = snprintf(mapping, sizeof(mapping), "%u %u 1\n", identifier, identifier);
+    int mapping_length = snprintf(mapping, sizeof(mapping), "0 %u 1\n", outer_identifier);
     if (mapping_length < 0 || (size_t)mapping_length >= sizeof(mapping))
     {
         errno = EOVERFLOW;
@@ -135,6 +135,12 @@ int main(int argument_count, char **arguments)
         if (received != 1 || command != 'C')
             _exit(EXIT_FAILURE);
 
+        if (setresgid(0, 0, 0) < 0 || setresuid(0, 0, 0) < 0)
+        {
+            fprintf(stderr, "murchalka-netns-exec: namespace root transition failed: %s\n", strerror(errno));
+            _exit(EXIT_FAILURE);
+        }
+
         execv(arguments[1], &arguments[1]);
         fprintf(stderr, "murchalka-netns-exec: exec failed: %s\n", strerror(errno));
         _exit(127);
@@ -153,8 +159,8 @@ int main(int argument_count, char **arguments)
     }
 
     if (write_process_file(child, "setgroups", "deny\n", 1) < 0 ||
-        write_id_map(child, "uid_map", (unsigned int)user_id) < 0 ||
-        write_id_map(child, "gid_map", (unsigned int)group_id) < 0)
+        write_root_id_map(child, "uid_map", (unsigned int)user_id) < 0 ||
+        write_root_id_map(child, "gid_map", (unsigned int)group_id) < 0)
     {
         fprintf(stderr, "murchalka-netns-exec: namespace identity mapping failed: %s\n", strerror(errno));
         close(continue_pipe[1]);

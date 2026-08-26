@@ -207,7 +207,8 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
                 persistentDirectory,
                 socketPath,
                 dotnetRoot,
-                shareNetwork || isolateWithNamespaceLauncher);
+                shareNetwork,
+                reusePrecreatedUserAndNetworkNamespaces: isolateWithNamespaceLauncher);
         }
         start.Environment.Clear();
         start.Environment["DOTNET_ROOT"] = dotnetRoot;
@@ -234,12 +235,23 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         string persistentDirectory,
         string socketPath,
         string dotnetRoot,
-        bool shareNetwork)
+        bool shareNetwork,
+        bool reusePrecreatedUserAndNetworkNamespaces = false)
     {
         start.ArgumentList.Add("--die-with-parent");
         start.ArgumentList.Add("--new-session");
-        start.ArgumentList.Add("--unshare-all");
-        if (shareNetwork) start.ArgumentList.Add("--share-net");
+        if (reusePrecreatedUserAndNetworkNamespaces)
+        {
+            start.ArgumentList.Add("--unshare-ipc");
+            start.ArgumentList.Add("--unshare-pid");
+            start.ArgumentList.Add("--unshare-uts");
+            start.ArgumentList.Add("--unshare-cgroup-try");
+        }
+        else
+        {
+            start.ArgumentList.Add("--unshare-all");
+            if (shareNetwork) start.ArgumentList.Add("--share-net");
+        }
         start.ArgumentList.Add("--cap-drop");
         start.ArgumentList.Add("ALL");
         // Bubblewrap applies mounts in argument order. Create the private /tmp first so

@@ -56,11 +56,19 @@ public sealed class LinuxSandboxArgumentTests
             "/runtime/state",
             "/runtime/sockets/module.sock",
             "/usr/share/dotnet",
-            shareNetwork: true);
+            shareNetwork: false,
+            reusePrecreatedUserAndNetworkNamespaces: true);
 
         Assert.Equal("/usr/local/libexec/murchalka-netns-exec", start.FileName);
         Assert.Equal("/usr/bin/bwrap", start.ArgumentList[0]);
-        Assert.Contains("--share-net", start.ArgumentList);
+        Assert.DoesNotContain("--unshare-all", start.ArgumentList);
+        Assert.DoesNotContain("--unshare-user", start.ArgumentList);
+        Assert.DoesNotContain("--unshare-net", start.ArgumentList);
+        Assert.DoesNotContain("--share-net", start.ArgumentList);
+        Assert.Contains("--unshare-ipc", start.ArgumentList);
+        Assert.Contains("--unshare-pid", start.ArgumentList);
+        Assert.Contains("--unshare-uts", start.ArgumentList);
+        Assert.Contains("--unshare-cgroup-try", start.ArgumentList);
         var capabilityDrop = start.ArgumentList.IndexOf("--cap-drop");
         Assert.True(capabilityDrop >= 0);
         Assert.Equal("ALL", start.ArgumentList[capabilityDrop + 1]);
