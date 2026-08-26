@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
 using Murchalka.ModuleProtocol.Contracts;
@@ -14,19 +15,18 @@ public sealed class ModuleGatewaySessionTests
     [Fact]
     public async Task UpdatesUseCanonicalProtocolJsonAsync()
     {
-        var socketPath = Path.Combine(Path.DirectorySeparatorChar.ToString(), "tmp", $"mg-{Guid.NewGuid():N}.sock");
-        using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        listener.Bind(new UnixDomainSocketEndPoint(socketPath));
-        listener.Listen(1);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start(1);
 
         try
         {
-            using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            var accept = listener.AcceptAsync(TestContext.Current.CancellationToken);
-            await client.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), TestContext.Current.CancellationToken);
+            using var client = new TcpClient(AddressFamily.InterNetwork);
+            var accept = listener.AcceptTcpClientAsync(TestContext.Current.CancellationToken);
+            var endpoint = (IPEndPoint)listener.LocalEndpoint;
+            await client.ConnectAsync(endpoint.Address, endpoint.Port, TestContext.Current.CancellationToken);
             using var server = await accept;
-            await using var clientStream = new NetworkStream(client, ownsSocket: false);
-            await using var serverStream = new NetworkStream(server, ownsSocket: false);
+            await using var clientStream = client.GetStream();
+            await using var serverStream = server.GetStream();
             var moduleId = new ModuleId("dev.murchalka.test");
             var instanceId = new InstanceId("test-instance");
             var hello = new ModuleHello(moduleId, new SemanticVersion(0, 2, 1), "sha256:" + new string('a', 64), instanceId, [1], "test", ModuleTarget.Runtime, "1", "digest", "nonce");
@@ -41,7 +41,7 @@ public sealed class ModuleGatewaySessionTests
         }
         finally
         {
-            if (File.Exists(socketPath)) File.Delete(socketPath);
+            listener.Stop();
         }
     }
 
