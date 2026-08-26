@@ -4,4 +4,7 @@
     <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.ModuleGateway/Murchalka.Runtime.ModuleGateway.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Murchalka.Runtime.Tests" />
+  </ItemGroup>
 </Project>

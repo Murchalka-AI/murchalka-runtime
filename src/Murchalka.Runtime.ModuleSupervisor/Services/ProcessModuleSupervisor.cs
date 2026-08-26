@@ -188,7 +188,15 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         {
             if (!File.Exists(start.FileName))
                 throw new ModuleActivationException("linux-sandbox-unavailable", "Process modules require /usr/bin/bwrap and fail closed when it is unavailable.");
-            AddLinuxSandboxArguments(start, artifactPath, bundle.ContentPath, workingDirectory, persistentDirectory, socketPath, dotnetRoot, grant, bundle.Manifest);
+            AddLinuxSandboxArguments(
+                start,
+                artifactPath,
+                bundle.ContentPath,
+                workingDirectory,
+                persistentDirectory,
+                socketPath,
+                dotnetRoot,
+                HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(bundle.Manifest));
         }
         start.Environment.Clear();
         start.Environment["DOTNET_ROOT"] = dotnetRoot;
@@ -207,7 +215,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         return start;
     }
 
-    private static void AddLinuxSandboxArguments(
+    internal static void AddLinuxSandboxArguments(
         ProcessStartInfo start,
         string artifactPath,
         string contentPath,
@@ -215,13 +223,16 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         string persistentDirectory,
         string socketPath,
         string dotnetRoot,
-        PermissionDecision grant,
-        ModuleManifest manifest)
+        bool shareNetwork)
     {
         start.ArgumentList.Add("--die-with-parent");
         start.ArgumentList.Add("--new-session");
         start.ArgumentList.Add("--unshare-all");
-        if (HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(manifest)) start.ArgumentList.Add("--share-net");
+        if (shareNetwork) start.ArgumentList.Add("--share-net");
+        // Bubblewrap applies mounts in argument order. Create the private /tmp first so
+        // explicit bundle, state, and socket binds below remain visible when hosted there.
+        start.ArgumentList.Add("--tmpfs");
+        start.ArgumentList.Add("/tmp");
         AddBind(start, "--ro-bind", contentPath);
         AddBind(start, "--bind", workingDirectory);
         AddBind(start, "--bind", persistentDirectory);
@@ -233,8 +244,6 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.ArgumentList.Add("/proc");
         start.ArgumentList.Add("--dev");
         start.ArgumentList.Add("/dev");
-        start.ArgumentList.Add("--tmpfs");
-        start.ArgumentList.Add("/tmp");
         start.ArgumentList.Add("--chdir");
         start.ArgumentList.Add(workingDirectory);
         start.ArgumentList.Add("--");
