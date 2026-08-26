@@ -245,7 +245,6 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             start.ArgumentList.Add("--unshare-ipc");
             start.ArgumentList.Add("--unshare-pid");
             start.ArgumentList.Add("--unshare-uts");
-            start.ArgumentList.Add("--unshare-cgroup-try");
         }
         else
         {

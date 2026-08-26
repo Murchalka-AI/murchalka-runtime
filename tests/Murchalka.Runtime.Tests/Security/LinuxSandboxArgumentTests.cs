@@ -68,7 +68,8 @@ public sealed class LinuxSandboxArgumentTests
         Assert.Contains("--unshare-ipc", start.ArgumentList);
         Assert.Contains("--unshare-pid", start.ArgumentList);
         Assert.Contains("--unshare-uts", start.ArgumentList);
-        Assert.Contains("--unshare-cgroup-try", start.ArgumentList);
+        Assert.DoesNotContain("--unshare-cgroup", start.ArgumentList);
+        Assert.DoesNotContain("--unshare-cgroup-try", start.ArgumentList);
         var capabilityDrop = start.ArgumentList.IndexOf("--cap-drop");
         Assert.True(capabilityDrop >= 0);
         Assert.Equal("ALL", start.ArgumentList[capabilityDrop + 1]);

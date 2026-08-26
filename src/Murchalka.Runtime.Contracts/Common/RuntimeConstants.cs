@@ -6,7 +6,7 @@ namespace Murchalka.Runtime.Contracts.Common;
 public static class RuntimeConstants
 {
     /// <summary>Gets the current Runtime semantic version.</summary>
-    public static SemanticVersion Version { get; } = new(0, 2, 15);
+    public static SemanticVersion Version { get; } = new(0, 2, 16);
     /// <summary>The supported Module Protocol major version.</summary>
     public const int ProtocolVersion = 1;
     /// <summary>The maximum compressed module bundle size.</summary>
