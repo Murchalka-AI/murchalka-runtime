@@ -32,6 +32,7 @@ public sealed class CapabilityRegistry : ICapabilityRegistry
         ArgumentNullException.ThrowIfNull(manifest);
         foreach (var capability in manifest.Capabilities)
         {
+            if (capability.Targets is { } targets && !targets.Contains(ModuleTarget.Runtime)) continue;
             var contract = ResolveInside(contentPath, capability.ContractPath);
             if (!File.Exists(contract)) throw new InvalidDataException($"Declared capability contract '{capability.ContractPath}' is missing.");
             var provider = new CapabilityProvider(

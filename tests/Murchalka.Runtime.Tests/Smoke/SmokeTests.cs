@@ -5,5 +5,5 @@ public sealed class SmokeTests
 {
     /// <summary>Verifies that the runtime exposes the coordinated Phase 5 patch version.</summary>
     [Fact]
-    public void RuntimeVersionIsPhaseFivePatch() => Assert.Equal("0.2.18", Murchalka.Runtime.Contracts.Common.RuntimeConstants.Version.ToString());
+    public void RuntimeVersionIsPhaseSixRelease() => Assert.Equal("0.3.0", Murchalka.Runtime.Contracts.Common.RuntimeConstants.Version.ToString());
 }

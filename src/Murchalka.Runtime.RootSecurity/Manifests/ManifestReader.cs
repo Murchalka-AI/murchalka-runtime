@@ -37,7 +37,8 @@ public static class ManifestReader
             var execution = RequiredObject(value, "execution");
             return new ProvidedCapability(new CapabilityId(RequiredString(value, "id")), RequiredString(value, "category"),
                 SemanticVersion.Parse(RequiredString(value, "version")), RequiredString(value, "contract"),
-                ParseDuration(RequiredString(execution, "timeout")), ReadValues(value["qualifiers"]), ReadScopes(value["scope"]));
+                ParseDuration(RequiredString(execution, "timeout")), ReadValues(value["qualifiers"]), ReadScopes(value["scope"]),
+                ReadTargets(value["targets"]));
         }).ToArray() ?? [];
         var required = root["requires"]?.AsObject();
         var moduleRequirements = ReadModuleRequirements(required?["modules"]);
@@ -80,6 +81,16 @@ public static class ManifestReader
     private static HashSet<BindingScopeType> ReadScopes(JsonNode? node) => node is JsonArray array
         ? array.Select(item => ParseScope(item!.GetValue<string>())).ToHashSet()
         : Enum.GetValues<BindingScopeType>().ToHashSet();
+
+    private static HashSet<ModuleTarget> ReadTargets(JsonNode? node) => node is JsonArray array
+        ? array.Select(item => item!.GetValue<string>() switch
+        {
+            "runtime" => ModuleTarget.Runtime,
+            "node" => ModuleTarget.Node,
+            "client" => ModuleTarget.Client,
+            var target => throw new InvalidDataException($"Unknown capability target '{target}'.")
+        }).ToHashSet()
+        : [ModuleTarget.Runtime];
 
     private static ModuleRequirement[] ReadModuleRequirements(JsonNode? node) => node is JsonArray array
         ? array.Select(item =>
