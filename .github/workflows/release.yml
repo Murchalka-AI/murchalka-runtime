@@ -176,6 +176,27 @@ jobs:
             artifacts/release/*.tar.gz
             artifacts/release/*.zip
 
+      - name: Prepare resumable draft release
+        id: release_state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          is_draft="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${is_draft}" == "false" ]]; then
+            echo "Published release ${GITHUB_REF_NAME} already exists and must remain immutable." >&2
+            exit 1
+          fi
+          if [[ -z "${is_draft}" ]]; then
+            args=(--draft --verify-tag --generate-notes --title "${GITHUB_REF_NAME}")
+            if [[ "${IS_PRERELEASE}" == "true" ]]; then args+=(--prerelease); fi
+            gh release create "${GITHUB_REF_NAME}" "${args[@]}" --repo "${GITHUB_REPOSITORY}"
+            echo "resuming=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "resuming=true" >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Authenticate to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -186,16 +207,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Reject an existing immutable image tag
+      - name: Resolve immutable image publication
+        id: image_state
         shell: bash
         run: |
           image="ghcr.io/murchalka-ai/murchalka-runtime:${{ steps.version.outputs.value }}"
           if docker buildx imagetools inspect "${image}" >/dev/null 2>&1; then
-            echo "Container image tag already exists and remains immutable." >&2
-            exit 1
+            if [[ "${{ steps.release_state.outputs.resuming }}" != "true" ]]; then
+              echo "Container image tag already exists and remains immutable." >&2
+              exit 1
+            fi
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "publish=true" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Publish Runtime container image
+        if: steps.image_state.outputs.publish == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -213,20 +241,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           assets=(artifacts/release/*.tar.gz artifacts/release/*.zip artifacts/release/SHA256SUMS)
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists and must remain immutable." >&2
-            exit 1
-          fi
-
-          args=(--verify-tag --generate-notes --title "${GITHUB_REF_NAME}")
-          if [[ "${IS_PRERELEASE}" == "true" ]]; then
-            args+=(--prerelease)
-          fi
-          gh release create \
-            "${GITHUB_REF_NAME}" \
-            "${assets[@]}" \
-            "${args[@]}" \
-            --repo "${GITHUB_REPOSITORY}"
+          gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
