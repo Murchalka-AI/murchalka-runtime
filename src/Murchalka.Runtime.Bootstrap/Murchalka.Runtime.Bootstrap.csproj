@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="../Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.Capabilities/Murchalka.Runtime.Capabilities.csproj" />
+    <ProjectReference Include="../Murchalka.Runtime.ClientExtensions/Murchalka.Runtime.ClientExtensions.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.Configuration/Murchalka.Runtime.Configuration.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.Dependencies/Murchalka.Runtime.Dependencies.csproj" />
     <ProjectReference Include="../Murchalka.Runtime.Events/Murchalka.Runtime.Events.csproj" />

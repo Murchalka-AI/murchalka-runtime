@@ -1,6 +1,6 @@
 # Murchalka Runtime
 
-Phase 5 implementation of the product-neutral Murchalka microkernel. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
+Product-neutral Murchalka microkernel through Phase 7. The Runtime starts with no modules and accepts signed `.murchalka` bundles through `modules/inbox` without a process restart.
 
 Implemented boundaries:
 
@@ -30,6 +30,7 @@ Implemented boundaries:
 - authenticated reverse capability routing restricted to the current dependency snapshot;
 - side-by-side module upgrade health gating, route switching, rollback retention and prior-bundle recovery;
 - local HTTP diagnostics plus lifecycle, configuration, state portability and secret administration operations.
+- atomic Client Extension catalog revisions, content-addressed artifact delivery, public publisher-key projection, SSE notifications, and immediate activation rollback/disable propagation.
 
 The first-party SQLite `storage.records@1` and local `secrets.provider@1` providers are delivered independently in `murchalka-storage-sqlite` and `murchalka-module-secrets-local`; neither is compiled into the Runtime. Product profile modules and remote or clustered providers remain later phases. Missing providers, ambiguous administrator selection, incompatible ranges, permission gaps, conflicts, cycles and irreversible failed upgrade migrations remain fail-closed.
 
@@ -69,4 +70,4 @@ dotnet run --project src/Murchalka.Runtime.Host -- --root ./var --admin-token-fi
 
 The control API listens on loopback only (default `http://127.0.0.1:5078`), and every `/v1` request requires the bearer token loaded from `--admin-token-file`; `/health` remains unauthenticated for local supervision. Trust keys live in `configuration/trusted-publishers.json`; grants live in `configuration/grants`; bindings live in `configuration/murchalka.bindings.yaml`; module configuration lives in `configuration/modules`; migration ledgers and exports live under `modules/migrations` and `modules/exports`; provider-owned encrypted secret state lives under `module-data/dev.murchalka.secrets-local/state/vault`. Empty permission requests receive an implicit empty grant, while any non-empty request requires an explicit signed grant.
 
-Configuration endpoints use optimistic revisions. Secret values are accepted only as Base64 and are never returned by the administration API. State imports accept only Runtime-generated export ids and require the consumer module to be inactive. Operational procedures are documented in [`docs/operations/phase4-runbook.md`](docs/operations/phase4-runbook.md).
+Configuration endpoints use optimistic revisions. Secret values are accepted only as Base64 and are never returned by the administration API. State imports accept only Runtime-generated export ids and require the consumer module to be inactive. Operational procedures are documented in [`docs/operations/phase4-runbook.md`](docs/operations/phase4-runbook.md); Client Extension operations are documented in [`docs/operations/phase7-runbook.md`](docs/operations/phase7-runbook.md).

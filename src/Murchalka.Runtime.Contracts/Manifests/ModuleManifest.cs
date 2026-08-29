@@ -52,6 +52,12 @@ public sealed record ModuleManifest(
     ModuleUpgradePolicy? Upgrade,
     JsonElement Document)
 {
+    /// <summary>Gets the signed client artifacts supplied by this module.</summary>
+    public IReadOnlyList<ClientArtifact> ClientArtifacts { get; init; } = [];
+
+    /// <summary>Gets the versioned UI component contributions supplied by this module.</summary>
+    public IReadOnlyList<UiComponentContribution> UiComponents { get; init; } = [];
+
     /// <summary>Gets the stable module id and version key.</summary>
     public string Key => $"{Id.Value}@{Version}";
 

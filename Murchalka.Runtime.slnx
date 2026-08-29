@@ -42,6 +42,7 @@
     <File Path="docs/operations/release.md" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/Murchalka.Runtime.ClientExtensions/Murchalka.Runtime.ClientExtensions.csproj" />
     <Project Path="src/Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
     <Project Path="src/Murchalka.Runtime.Audit/Murchalka.Runtime.Audit.csproj" />
     <Project Path="src/Murchalka.Runtime.RootSecurity/Murchalka.Runtime.RootSecurity.csproj" />

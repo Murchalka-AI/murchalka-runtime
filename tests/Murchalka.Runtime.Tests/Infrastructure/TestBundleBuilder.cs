@@ -130,7 +130,7 @@ internal sealed class TestBundleBuilder : IDisposable
             ["apiVersion"] = "modules.murchalka.dev/v1",
             ["kind"] = "Module",
             ["metadata"] = new JsonObject { ["id"] = "dev.murchalka.hello-test", ["name"] = "Hello Test", ["version"] = "1.0.0", ["publisher"] = Publisher, ["description"] = "Out-of-process Phase 1 fixture.", ["license"] = "Apache-2.0" },
-            ["compatibility"] = new JsonObject { ["moduleSdk"] = ">=0.1.0 <1.0.0", ["runtime"] = ">=0.1.0 <0.4.0", ["moduleProtocol"] = "1" },
+            ["compatibility"] = new JsonObject { ["moduleSdk"] = ">=0.1.0 <1.0.0", ["runtime"] = ">=0.1.0 <0.5.0", ["moduleProtocol"] = "1" },
             ["artifacts"] = new JsonObject { ["runtime"] = new JsonArray(new JsonObject { ["id"] = "hello-process", ["mode"] = "process", ["os"] = new JsonArray(os), ["architectures"] = new JsonArray(architecture), ["entrypoint"] = artifactPath, ["digest"] = artifactDigest, ["protocolVersion"] = 1 }) },
             ["provides"] = new JsonObject { ["capabilities"] = new JsonArray(new JsonObject { ["id"] = "hello.greet", ["category"] = "examples.greeting", ["version"] = "1.0.0", ["contract"] = "schemas/capabilities/hello.greet.json", ["execution"] = new JsonObject { ["kind"] = "requestResponse", ["idempotency"] = "readOnly", ["timeout"] = "2s" } }) },
             ["contributes"] = new JsonObject

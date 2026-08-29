@@ -2,6 +2,7 @@ using Murchalka.Runtime.Audit.Services;
 using Murchalka.Runtime.Bindings.Services;
 using Murchalka.Runtime.Bootstrap.Hosting;
 using Murchalka.Runtime.Capabilities.Registry;
+using Murchalka.Runtime.ClientExtensions.Services;
 using Murchalka.Runtime.Configuration.Services;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Dependencies.Locks;
@@ -58,8 +59,9 @@ public static class RuntimeBootstrap
         var pipelines = new DynamicPipelineRuntime(new ModulePipelineHandlerInvoker(supervisor), audit, clock);
         var events = new DurableEventFabric(paths, new ModuleEventDeliverySink(supervisor), audit, clock);
         var migrations = new ProviderStateMigrationCoordinator(paths, capabilities, audit, clock);
+        var clientExtensions = new ClientExtensionCatalog(clock);
         var watcher = new ModuleDirectoryWatcher(paths, clock, discoveryPollInterval);
-        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, configuration, secretStore, secretBroker, resolver, locks, pipelines, events, migrations, audit, clock);
+        var kernel = new RuntimeKernel(paths, watcher, verifier, store, state, grants, supervisor, capabilities, bindings, configuration, secretStore, secretBroker, resolver, locks, pipelines, events, migrations, clientExtensions, audit, clock);
         return new RuntimeApplication(paths, kernel, supervisor, store, state, bindings, configuration, secretStore, migrations, audit);
     }
 }

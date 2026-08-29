@@ -31,6 +31,19 @@ public static class ManifestReader
                 RequiredString(value, "entrypoint"), RequiredString(value, "digest"),
                 value["protocolVersion"]?.GetValue<int>() ?? protocol);
         }).ToArray() ?? [];
+        var clientArtifacts = artifacts["client"]?.AsArray().Select(item =>
+        {
+            var value = item!.AsObject();
+            return new ClientArtifact(
+                RequiredString(value, "id"),
+                RequiredString(value, "extensionId"),
+                RequiredString(value, "extensionVersion"),
+                ReadClientTargets(value["target"]),
+                RequiredString(value, "mode"),
+                RequiredString(value, "entrypoint"),
+                RequiredString(value, "digest"),
+                RequiredString(value, "fallbackComponent"));
+        }).ToArray() ?? [];
         var capabilities = provides["capabilities"]?.AsArray().Select(item =>
         {
             var value = item!.AsObject();
@@ -48,6 +61,7 @@ public static class ManifestReader
         var contributions = root["contributes"]?.AsObject();
         var pipelineContributions = ReadPipelineContributions(contributions?["pipelines"]);
         var events = contributions?["events"]?.AsObject();
+        var uiComponents = ReadUiComponents(contributions?["ui"]?["components"]);
         var eventPublications = ReadEventPublications(events?["publications"]);
         var eventSubscriptions = ReadEventSubscriptions(events?["subscriptions"]);
         var pipelineDefinitionPaths = ReadPipelineDefinitionPaths(root["extensions"]);
@@ -67,12 +81,39 @@ public static class ManifestReader
             new HealthPolicy(ParseDuration(RequiredString(health, "startupTimeout")), ParseDuration(RequiredString(readiness, "timeout")), readiness["failureThreshold"]!.GetValue<int>()),
             new ActivationPolicy(RequiredString(activation, "mode"), RequiredString(activation, "failurePolicy"), activation["hotReload"]!.GetValue<bool>(), ParseDuration(RequiredString(activation, "drainTimeout"))),
             upgrade,
-            JsonSerializer.SerializeToElement(root));
+            JsonSerializer.SerializeToElement(root))
+        {
+            ClientArtifacts = clientArtifacts,
+            UiComponents = uiComponents
+        };
     }
 
     private static JsonObject RequiredObject(JsonObject value, string name) => value[name]?.AsObject() ?? throw new InvalidDataException($"Manifest object '{name}' is missing.");
     private static string RequiredString(JsonObject value, string name) => value[name]?.GetValue<string>() ?? throw new InvalidDataException($"Manifest value '{name}' is missing.");
     private static HashSet<string> ReadSet(JsonNode? node) => node is JsonArray array ? array.Select(item => item!.GetValue<string>()).ToHashSet(StringComparer.Ordinal) : [];
+
+    private static HashSet<ClientTarget> ReadClientTargets(JsonNode? node) => node is JsonArray array
+        ? array.Select(item => item!.GetValue<string>() switch
+        {
+            "web" => ClientTarget.Web,
+            "desktop" => ClientTarget.Desktop,
+            "mobile" => ClientTarget.Mobile,
+            "xr" => ClientTarget.Xr,
+            var target => throw new InvalidDataException($"Unknown client target '{target}'.")
+        }).ToHashSet()
+        : [];
+
+    private static UiComponentContribution[] ReadUiComponents(JsonNode? node) => node is JsonArray array
+        ? array.Select(item =>
+        {
+            var value = item!.AsObject();
+            return new UiComponentContribution(
+                RequiredString(value, "id"),
+                value["version"]?.GetValue<int>() ?? throw new InvalidDataException("UI component version is missing."),
+                RequiredString(value, "artifact"),
+                RequiredString(value, "schema"));
+        }).ToArray()
+        : [];
 
     private static Dictionary<string, JsonElement> ReadValues(JsonNode? node) => node is JsonObject value
         ? value.ToDictionary(pair => pair.Key, pair => JsonSerializer.SerializeToElement(pair.Value), StringComparer.Ordinal)

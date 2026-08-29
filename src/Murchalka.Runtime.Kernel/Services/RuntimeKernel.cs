@@ -62,6 +62,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
     private readonly ICompositionLockStore _locks;
     private readonly IPipelineRuntime _pipelines;
     private readonly IEventFabric _events;
+    private readonly IClientExtensionCatalog _clientExtensions;
     private readonly IStateMigrationCoordinator _migrations;
     private readonly IRootAudit _audit;
     private readonly TimeProvider _timeProvider;
@@ -90,12 +91,13 @@ public sealed class RuntimeKernel : IAsyncDisposable
     /// <param name="pipelines">The dynamic pipeline runtime.</param>
     /// <param name="events">The durable local event fabric.</param>
     /// <param name="migrations">The provider-backed state migration coordinator.</param>
+    /// <param name="clientExtensions">The verified active client extension catalog.</param>
     /// <param name="audit">The root audit trail.</param>
     /// <param name="timeProvider">The optional source of current time.</param>
     public RuntimeKernel(RuntimePaths paths, ModuleDirectoryWatcher watcher, IBundleVerifier verifier, IModuleStore store, IModuleStateStore state,
         IPermissionGrantStore grants, IModuleSupervisor supervisor, ICapabilityRegistry capabilities, IBindingStore bindings, IModuleConfigurationStore configuration,
         ISecretStore secretStore, ISecretBroker secretBroker,
-        IDependencyResolver resolver, ICompositionLockStore locks, IPipelineRuntime pipelines, IEventFabric events, IStateMigrationCoordinator migrations,
+        IDependencyResolver resolver, ICompositionLockStore locks, IPipelineRuntime pipelines, IEventFabric events, IStateMigrationCoordinator migrations, IClientExtensionCatalog clientExtensions,
         IRootAudit audit, TimeProvider? timeProvider = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -115,6 +117,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
         _pipelines = pipelines ?? throw new ArgumentNullException(nameof(pipelines));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _migrations = migrations ?? throw new ArgumentNullException(nameof(migrations));
+        _clientExtensions = clientExtensions ?? throw new ArgumentNullException(nameof(clientExtensions));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _supervisor.ModuleExited += OnModuleExited;
@@ -128,6 +131,9 @@ public sealed class RuntimeKernel : IAsyncDisposable
 
     /// <summary>Gets the durable local event fabric.</summary>
     public IEventFabric Events => _events;
+
+    /// <summary>Gets the active verified client extension catalog.</summary>
+    public IClientExtensionCatalog ClientExtensions => _clientExtensions;
 
     /// <summary>Invokes one active capability from the loopback administrative control plane.</summary>
     /// <param name="capabilityId">The exact capability identifier.</param>
@@ -450,6 +456,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
                 _pipelines.UnregisterModule(record.ModuleId, instance);
                 _events.UnregisterModule(record.ModuleId, instance);
                 _capabilities.Unregister(record.ModuleId, instance);
+                _clientExtensions.UnregisterModule(record.ModuleId);
                 await _supervisor.StopAsync(instance, TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
                 record = await TransitionAsync(draining, ModuleLifecycleState.Disabled, "disabled", desiredEnabled: false, cancellationToken).ConfigureAwait(false);
             }
@@ -630,6 +637,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _pipelines.UnregisterModule(current.ModuleId, priorInstance);
             _events.UnregisterModule(current.ModuleId, priorInstance);
             _capabilities.Unregister(current.ModuleId, priorInstance);
+            _clientExtensions.UnregisterModule(current.ModuleId);
             await _supervisor.StopAsync(priorInstance, priorBundle.Manifest.Activation.DrainTimeout, cancellationToken).ConfigureAwait(false);
 
             migrationPhaseEntered = true;
@@ -638,6 +646,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _pipelines.RegisterModule(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, bindings);
             _events.RegisterModule(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, grant);
             _capabilities.Register(installed.Manifest, candidateSession.InstanceId, installed.ContentPath, installed.Digest);
+            _clientExtensions.RegisterModule(installed);
 
             var switched = updating with
             {
@@ -664,6 +673,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
                 _pipelines.UnregisterModule(candidate.Manifest.Id, candidateSession.InstanceId);
                 _events.UnregisterModule(candidate.Manifest.Id, candidateSession.InstanceId);
                 _capabilities.Unregister(candidate.Manifest.Id, candidateSession.InstanceId);
+                _clientExtensions.UnregisterModule(candidate.Manifest.Id);
                 await _supervisor.StopAsync(candidateSession.InstanceId, candidate.Manifest.Activation.DrainTimeout, CancellationToken.None).ConfigureAwait(false);
             }
             if (updating.State == ModuleLifecycleState.Updating)
@@ -768,6 +778,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _pipelines.RegisterModule(installed.Manifest, session.InstanceId, installed.ContentPath, bindings);
             _events.RegisterModule(installed.Manifest, session.InstanceId, installed.ContentPath, grant);
             _capabilities.Register(installed.Manifest, session.InstanceId, installed.ContentPath, installed.Digest);
+            _clientExtensions.RegisterModule(installed);
             return await TransitionAsync(record, ModuleLifecycleState.Active, "health-gate-passed", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -777,6 +788,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
                 _pipelines.UnregisterModule(record.ModuleId, session.InstanceId);
                 _events.UnregisterModule(record.ModuleId, session.InstanceId);
                 _capabilities.Unregister(record.ModuleId, session.InstanceId);
+                _clientExtensions.UnregisterModule(record.ModuleId);
                 await _supervisor.StopAsync(session.InstanceId, installed.Manifest.Activation.DrainTimeout, CancellationToken.None).ConfigureAwait(false);
             }
             var state = exception is PipelineExecutionException ? ModuleLifecycleState.Conflict : ModuleLifecycleState.Failed;
@@ -817,6 +829,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
         _pipelines.UnregisterModule(record.ModuleId, instance);
         _events.UnregisterModule(record.ModuleId, instance);
         _capabilities.Unregister(record.ModuleId, instance);
+        _clientExtensions.UnregisterModule(record.ModuleId);
         await _supervisor.StopAsync(instance, installed.Manifest.Activation.DrainTimeout, cancellationToken).ConfigureAwait(false);
         var disabled = await TransitionAsync(draining, ModuleLifecycleState.Disabled, "configuration-restart", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
         var verified = await _verifier.VerifyAsync(installed.BundlePath, cancellationToken).ConfigureAwait(false);
@@ -911,6 +924,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
                     _pipelines.UnregisterModule(record.ModuleId, instance);
                     _events.UnregisterModule(record.ModuleId, instance);
                     _capabilities.Unregister(record.ModuleId, instance);
+                    _clientExtensions.UnregisterModule(record.ModuleId);
                     await _supervisor.StopAsync(instance, installed.Manifest.Activation.DrainTimeout, cancellationToken).ConfigureAwait(false);
                     var disabled = await TransitionAsync(draining, ModuleLifecycleState.Disabled, "dependency-reconciliation", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
                     var verifying = await TransitionAsync(disabled, ModuleLifecycleState.Verifying, "dependency-reconciliation", desiredEnabled: true, cancellationToken).ConfigureAwait(false);
@@ -1004,6 +1018,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _pipelines.UnregisterModule(args.ModuleId, args.InstanceId);
             _events.UnregisterModule(args.ModuleId, args.InstanceId);
             _capabilities.Unregister(args.ModuleId, args.InstanceId);
+            _clientExtensions.UnregisterModule(args.ModuleId);
             await TransitionAsync(record, ModuleLifecycleState.Failed, $"{args.ReasonCode}:{args.ExitCode}", desiredEnabled: true, CancellationToken.None).ConfigureAwait(false);
             await ReconcileActiveDependenciesAsync(args.ModuleId, CancellationToken.None).ConfigureAwait(false);
         }
@@ -1076,6 +1091,7 @@ public sealed class RuntimeKernel : IAsyncDisposable
             _pipelines.UnregisterModule(record.ModuleId, instance);
             _events.UnregisterModule(record.ModuleId, instance);
             _capabilities.Unregister(record.ModuleId, instance);
+            _clientExtensions.UnregisterModule(record.ModuleId);
             await _supervisor.StopAsync(instance, TimeSpan.FromSeconds(2), CancellationToken.None).ConfigureAwait(false);
         }
         await _watcher.DisposeAsync().ConfigureAwait(false);
