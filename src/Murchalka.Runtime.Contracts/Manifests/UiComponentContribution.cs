@@ -4,5 +4,11 @@ namespace Murchalka.Runtime.Contracts.Manifests;
 /// <param name="Id">The globally unique component identifier.</param>
 /// <param name="Version">The component contract major version.</param>
 /// <param name="ArtifactId">The owning client artifact identifier.</param>
-/// <param name="SchemaPath">The bundle-relative properties schema.</param>
-public sealed record UiComponentContribution(string Id, int Version, string ArtifactId, string SchemaPath);
+/// <param name="PropertiesSchemaPath">The bundle-relative properties schema.</param>
+/// <param name="EventsSchemaPath">The bundle-relative emitted-events schema.</param>
+public sealed record UiComponentContribution(
+    string Id,
+    int Version,
+    string ArtifactId,
+    string PropertiesSchemaPath,
+    string EventsSchemaPath);

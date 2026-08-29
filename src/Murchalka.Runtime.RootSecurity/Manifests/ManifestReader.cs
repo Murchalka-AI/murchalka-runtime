@@ -107,11 +107,13 @@ public static class ManifestReader
         ? array.Select(item =>
         {
             var value = item!.AsObject();
+            var legacySchema = value["schema"]?.GetValue<string>();
             return new UiComponentContribution(
                 RequiredString(value, "id"),
                 value["version"]?.GetValue<int>() ?? throw new InvalidDataException("UI component version is missing."),
                 RequiredString(value, "artifact"),
-                RequiredString(value, "schema"));
+                legacySchema ?? RequiredString(value, "propertiesSchema"),
+                legacySchema ?? RequiredString(value, "eventsSchema"));
         }).ToArray()
         : [];
 

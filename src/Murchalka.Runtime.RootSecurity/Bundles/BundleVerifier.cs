@@ -213,10 +213,11 @@ public sealed class BundleVerifier : IBundleVerifier
     {
         foreach (var path in manifest.EventPublications.Select(value => value.SchemaPath)
                      .Concat(manifest.EventSubscriptions.Select(value => value.SchemaPath))
+                     .Concat(manifest.UiComponents.SelectMany(value => new[] { value.PropertiesSchemaPath, value.EventsSchemaPath }))
                      .Distinct(StringComparer.Ordinal))
         {
             var schema = await ReadEntryAsync(Required(entries, path), cancellationToken).ConfigureAwait(false);
-            _ = JsonSchema.FromText(System.Text.Encoding.UTF8.GetString(schema));
+            _ = JsonSchema.FromText(System.Text.Encoding.UTF8.GetString(schema), new BuildOptions { SchemaRegistry = new SchemaRegistry() });
         }
         foreach (var path in manifest.PipelineDefinitionPaths.Distinct(StringComparer.Ordinal))
         {
@@ -255,7 +256,7 @@ public sealed class BundleVerifier : IBundleVerifier
                 ?? throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has no {section} schema.");
             var schemaPath = ResolveBundleRelative(path, schema);
             var bytes = await ReadEntryAsync(Required(entries, schemaPath), cancellationToken).ConfigureAwait(false);
-            _ = JsonSchema.FromText(System.Text.Encoding.UTF8.GetString(bytes));
+            _ = JsonSchema.FromText(System.Text.Encoding.UTF8.GetString(bytes), new BuildOptions { SchemaRegistry = new SchemaRegistry() });
         }
         var semantics = root["semantics"]?.AsObject() ?? throw Failure(BundleVerificationFailureKind.InvalidManifest, "pipeline-definition-invalid", $"Pipeline definition '{path}' has no semantics.");
         if (semantics["deadline"]?.GetValue<string>() is not { Length: > 1 } ||

@@ -38,7 +38,18 @@ app.Use(async (context, next) =>
 {
     if (context.Request.Path.StartsWithSegments("/client/v1"))
     {
-        context.Response.Headers.AccessControlAllowOrigin = "*";
+        var origin = context.Request.Headers.Origin.ToString();
+        if (!string.IsNullOrEmpty(origin) && !IsAllowedClientOrigin(origin))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { code = "client-origin-denied", message = "Client Runtime endpoints accept only explicit loopback or packaged Desktop origins." });
+            return;
+        }
+        if (!string.IsNullOrEmpty(origin))
+        {
+            context.Response.Headers.AccessControlAllowOrigin = origin;
+            context.Response.Headers.Vary = "Origin";
+        }
         context.Response.Headers.AccessControlAllowMethods = "GET, OPTIONS";
         context.Response.Headers.AccessControlAllowHeaders = "If-None-Match";
         context.Response.Headers.XContentTypeOptions = "nosniff";
@@ -306,4 +317,12 @@ static string? ReadOption(string[] arguments, string name)
     for (var index = 0; index < arguments.Length - 1; index++)
         if (arguments[index] == name) return arguments[index + 1];
     return null;
+}
+
+static bool IsAllowedClientOrigin(string value)
+{
+    if (string.Equals(value, "murchalka://app", StringComparison.Ordinal)) return true;
+    if (!Uri.TryCreate(value, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttp || !string.IsNullOrEmpty(origin.UserInfo) ||
+        !string.IsNullOrEmpty(origin.Query) || !string.IsNullOrEmpty(origin.Fragment) || origin.AbsolutePath != "/") return false;
+    return origin.IsLoopback;
 }
