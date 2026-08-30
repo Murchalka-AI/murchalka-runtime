@@ -58,6 +58,9 @@ public sealed record ModuleManifest(
     /// <summary>Gets the versioned UI component contributions supplied by this module.</summary>
     public IReadOnlyList<UiComponentContribution> UiComponents { get; init; } = [];
 
+    /// <summary>Gets the bounded external protocol routes supplied by this module.</summary>
+    public IReadOnlyList<ProtocolContribution> ProtocolContributions { get; init; } = [];
+
     /// <summary>Gets the stable module id and version key.</summary>
     public string Key => $"{Id.Value}@{Version}";
 

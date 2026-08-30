@@ -41,6 +41,36 @@ public sealed class ManifestReaderTests
         Assert.Equal("schemas/ui/legacy.json", component.EventsSchemaPath);
     }
 
+    /// <summary>Verifies that protocol routes can invoke only capabilities declared by their module.</summary>
+    [Fact]
+    public void ProtocolContributionRequiresDeclaredHandler()
+    {
+        var document = CreateManifest(new JsonObject
+        {
+            ["id"] = "client.proof.card",
+            ["version"] = 1,
+            ["artifact"] = "proof-client",
+            ["schema"] = "schemas/ui/proof.json"
+        });
+        document["contributes"]!["protocols"] = new JsonArray(new JsonObject
+        {
+            ["id"] = "protocol.example.http",
+            ["version"] = 1,
+            ["routeNamespace"] = "example",
+            ["handler"] = "protocol.example.route",
+            ["descriptor"] = "schemas/protocols/example.json",
+            ["transports"] = new JsonArray("http"),
+            ["authentication"] = new JsonArray("bearer"),
+            ["streaming"] = "none",
+            ["limits"] = new JsonObject { ["maxPayloadBytes"] = 4096, ["maxConcurrency"] = 8, ["timeout"] = "5s" },
+            ["security"] = new JsonObject { ["externalContent"] = "untrusted", ["privateNetwork"] = "deny" }
+        });
+
+        var exception = Assert.Throws<InvalidDataException>(() => ManifestReader.Read(document));
+
+        Assert.Contains("not a declared capability", exception.Message, StringComparison.Ordinal);
+    }
+
     private static JsonObject CreateManifest(JsonObject component) => new()
     {
         ["apiVersion"] = "modules.murchalka.dev/v1",

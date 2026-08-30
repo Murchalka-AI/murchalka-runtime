@@ -134,7 +134,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             exitTimeout.CancelAfter(TimeSpan.FromSeconds(5));
             await module.Process.WaitForExitAsync(exitTimeout.Token).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or InvalidDataException or OperationCanceledException or InvalidOperationException or TimeoutException)
         {
             TryKill(module.Process);
             await module.Process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
@@ -191,7 +191,7 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         {
             if (!File.Exists(start.FileName))
                 throw new ModuleActivationException("linux-sandbox-unavailable", "Process modules require /usr/bin/bwrap and fail closed when it is unavailable.");
-            var shareNetwork = HasApprovedLoopbackNetwork(grant.Grant) || HasLoopbackListener(bundle.Manifest);
+            var shareNetwork = HasApprovedOutboundNetwork(grant.Grant) || HasDeclaredLoopbackListener(bundle.Manifest);
             var useNamespaceLauncher = UseNetworkNamespaceLauncher();
             if (useNamespaceLauncher)
             {
@@ -299,19 +299,24 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
         start.ArgumentList.Add(fullPath);
     }
 
-    private static bool HasApprovedLoopbackNetwork(JsonElement grant)
+    private static bool HasApprovedOutboundNetwork(JsonElement grant)
     {
         if (!grant.TryGetProperty("network", out var network) ||
             !network.TryGetProperty("outbound", out var outbound) ||
             outbound.ValueKind != JsonValueKind.Array)
             return false;
         return outbound.EnumerateArray().Any(rule =>
-            rule.TryGetProperty("scheme", out var scheme) && scheme.GetString() == "http" &&
-            rule.TryGetProperty("host", out var host) && host.GetString() == "127.0.0.1" &&
+            rule.TryGetProperty("scheme", out var scheme) && scheme.ValueKind == JsonValueKind.String &&
+            rule.TryGetProperty("host", out var host) && host.ValueKind == JsonValueKind.String &&
             rule.TryGetProperty("ports", out var ports) && ports.ValueKind == JsonValueKind.Array && ports.GetArrayLength() > 0);
     }
 
-    private static bool HasLoopbackListener(ModuleManifest manifest) =>
+    private static bool HasDeclaredLoopbackListener(ModuleManifest manifest) =>
+        manifest.Document.TryGetProperty("artifacts", out var artifacts) &&
+        artifacts.TryGetProperty("runtime", out var runtimeArtifacts) &&
+        runtimeArtifacts.EnumerateArray().Any(artifact =>
+            artifact.TryGetProperty("requiredHostFeatures", out var features) &&
+            features.EnumerateArray().Any(feature => feature.GetString() == "loopback-listener")) ||
         manifest.Document.TryGetProperty("extensions", out var extensions) &&
         extensions.TryGetProperty("dev.murchalka.client-realtime", out var realtime) &&
         realtime.TryGetProperty("loopbackListener", out var listener) &&
@@ -352,13 +357,16 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             $"(allow file-write* (subpath {Literal(logicalWorking)}) (subpath {Literal(canonicalWorking)}) (subpath {Literal(logicalPersistent)}) (subpath {Literal(canonicalPersistent)}))",
             $"(allow network-outbound (literal {Literal(logicalSocket)}) (literal {Literal(canonicalSocket)}))"
         };
-        rules.AddRange(CreateMacLoopbackNetworkRules(grant.Grant));
-        if (HasLoopbackListener(manifest))
+        rules.AddRange(CreateMacNetworkRules(grant.Grant));
+        if (HasDeclaredLoopbackListener(manifest))
+        {
             rules.Add("(allow network-bind (local ip \"localhost:*\"))");
+            rules.Add("(allow network-inbound (local ip \"localhost:*\"))");
+        }
         return string.Join(' ', rules);
     }
 
-    private static IEnumerable<string> CreateMacLoopbackNetworkRules(JsonElement grant)
+    private static IEnumerable<string> CreateMacNetworkRules(JsonElement grant)
     {
         if (!grant.TryGetProperty("network", out var network) ||
             !network.TryGetProperty("outbound", out var outbound) ||
@@ -366,11 +374,15 @@ public sealed class ProcessModuleSupervisor : IModuleSupervisor, IAsyncDisposabl
             yield break;
         foreach (var rule in outbound.EnumerateArray())
         {
-            if (rule.GetProperty("scheme").GetString() != "http" ||
-                rule.GetProperty("host").GetString() != "127.0.0.1")
-                continue;
+            var scheme = rule.GetProperty("scheme").GetString();
+            var host = rule.GetProperty("host").GetString();
             foreach (var port in rule.GetProperty("ports").EnumerateArray())
-                yield return $"(allow network-outbound (remote ip \"localhost:{port.GetInt32()}\"))";
+            {
+                if (scheme == "http" && host is "127.0.0.1" or "::1")
+                    yield return $"(allow network-outbound (remote ip \"localhost:{port.GetInt32()}\"))";
+                else if (scheme is "https" or "wss" or "grpc+tls")
+                    yield return $"(allow network-outbound (remote tcp \"*:{port.GetInt32()}\"))";
+            }
         }
     }
 

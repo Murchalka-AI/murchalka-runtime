@@ -5,6 +5,7 @@ using Murchalka.Runtime.Bootstrap.Composition;
 using Murchalka.Runtime.Contracts.Bindings;
 using Murchalka.Runtime.Contracts.Common;
 using Murchalka.Runtime.Contracts.Configuration;
+using Murchalka.Runtime.Contracts.Permissions;
 using Murchalka.Runtime.Host.Bootstrap;
 using Murchalka.Runtime.Host.Security;
 
@@ -149,13 +150,15 @@ app.MapGet("/v1/capabilities", () => Results.Ok(runtime.Kernel.Capabilities.Snap
     instance = value.InstanceId.Value,
     category = value.Category
 })));
+app.MapGet("/v1/protocols", async (CancellationToken cancellationToken) =>
+    Results.Ok(await runtime.Kernel.GetProtocolContributionsAsync(cancellationToken)));
 app.MapPost("/v1/capabilities/{capabilityId}/invoke", async (string capabilityId, HttpRequest request, CancellationToken cancellationToken) =>
 {
     if (request.ContentLength is > 1_048_576)
         return Results.Json(new { code = "request-too-large", message = "Administrative capability requests are limited to 1 MiB." }, statusCode: StatusCodes.Status413PayloadTooLarge);
     try
     {
-        var document = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        var document = await DeserializeBoundedAsync(request, 1_048_576, cancellationToken);
         if (document.ValueKind != JsonValueKind.Object || !document.TryGetProperty("payload", out var payload))
             return Results.BadRequest(new { code = "request-invalid", message = "Property 'payload' is required." });
         var idempotencyKey = document.TryGetProperty("idempotencyKey", out var key) && key.ValueKind != JsonValueKind.Null
@@ -228,7 +231,7 @@ app.MapPut("/v1/bindings", async (HttpRequest request, long expectedRevision, Ca
 {
     try
     {
-        var document = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        var document = await DeserializeBoundedAsync(request, 1_048_576, cancellationToken);
         var updated = await runtime.Kernel.ReplaceBindingsAsync(document, expectedRevision, cancellationToken);
         return Results.Ok(BindingDocumentJson.Serialize(updated));
     }
@@ -251,7 +254,7 @@ app.MapPut("/v1/modules/{moduleId}/configuration", async (string moduleId, HttpR
 {
     try
     {
-        var values = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        var values = await DeserializeBoundedAsync(request, 1_048_576, cancellationToken);
         return await runtime.Kernel.ReplaceConfigurationAsync(new ModuleId(moduleId), values, expectedRevision, cancellationToken) is { } snapshot
             ? Results.Ok(snapshot)
             : Results.NotFound();
@@ -270,7 +273,7 @@ app.MapPut("/v1/secrets/{*name}", async (string name, HttpRequest request, long 
     byte[] value = [];
     try
     {
-        var document = await JsonSerializer.DeserializeAsync<JsonElement>(request.Body, cancellationToken: cancellationToken);
+        var document = await DeserializeBoundedAsync(request, 1_048_576, cancellationToken);
         value = Convert.FromBase64String(document.GetProperty("value").GetString() ?? string.Empty);
         return Results.Ok(await runtime.Kernel.PutSecretAsync(name, value, expectedRevision, cancellationToken));
     }
@@ -281,6 +284,32 @@ app.MapPut("/v1/secrets/{*name}", async (string name, HttpRequest request, long 
     finally
     {
         if (value.Length > 0) System.Security.Cryptography.CryptographicOperations.ZeroMemory(value);
+    }
+});
+app.MapGet("/v1/modules/{moduleId}/permission-grant", async (string moduleId, CancellationToken cancellationToken) =>
+{
+    try { return await runtime.Kernel.GetPermissionGrantAsync(new ModuleId(moduleId), cancellationToken) is { } decision ? Results.Ok(decision) : Results.NotFound(); }
+    catch (ArgumentException exception) { return Results.BadRequest(new { code = "module-id-invalid", message = exception.Message }); }
+    catch (InvalidDataException exception) { return Results.Conflict(new { code = "permission-grant-invalid", message = exception.Message }); }
+});
+app.MapPut("/v1/modules/{moduleId}/permission-grant", async (string moduleId, HttpRequest request, long expectedRevision, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        const long maximumGrantBytes = 1024 * 1024;
+        if (request.ContentLength is > maximumGrantBytes) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+        var document = await DeserializeBoundedAsync(request, (int)maximumGrantBytes, cancellationToken);
+        return await runtime.Kernel.ReplacePermissionGrantAsync(new ModuleId(moduleId), document, expectedRevision, cancellationToken) is { } decision
+            ? Results.Ok(decision)
+            : Results.NotFound();
+    }
+    catch (PermissionGrantRevisionConflictException exception)
+    {
+        return Results.Conflict(new { code = "permission-grant-revision-conflict", expectedRevision = exception.ExpectedRevision, actualRevision = exception.ActualRevision });
+    }
+    catch (Exception exception) when (exception is JsonException or InvalidDataException or InvalidOperationException or ArgumentException)
+    {
+        return Results.BadRequest(new { code = "permission-grant-update-rejected", message = exception.Message });
     }
 });
 app.MapPost("/v1/modules/{moduleId}/state/{namespaceName}/export", async (string moduleId, string namespaceName, CancellationToken cancellationToken) =>
@@ -325,4 +354,23 @@ static bool IsAllowedClientOrigin(string value)
     if (!Uri.TryCreate(value, UriKind.Absolute, out var origin) || origin.Scheme != Uri.UriSchemeHttp || !string.IsNullOrEmpty(origin.UserInfo) ||
         !string.IsNullOrEmpty(origin.Query) || !string.IsNullOrEmpty(origin.Fragment) || origin.AbsolutePath != "/") return false;
     return origin.IsLoopback;
+}
+
+static async Task<JsonElement> DeserializeBoundedAsync(HttpRequest request, int maximumBytes, CancellationToken cancellationToken)
+{
+    if (request.ContentLength is > 0 && request.ContentLength > maximumBytes)
+        throw new BadHttpRequestException("The request body exceeds the administrative limit.", StatusCodes.Status413PayloadTooLarge);
+    var capacity = request.ContentLength is > 0 ? Math.Min(maximumBytes, (int)request.ContentLength.Value) : 0;
+    using var buffer = new MemoryStream(capacity);
+    var chunk = new byte[8192];
+    while (true)
+    {
+        var read = await request.Body.ReadAsync(chunk, cancellationToken);
+        if (read == 0) break;
+        if (buffer.Length + read > maximumBytes)
+            throw new BadHttpRequestException("The request body exceeds the administrative limit.", StatusCodes.Status413PayloadTooLarge);
+        await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+    }
+    buffer.Position = 0;
+    return await JsonSerializer.DeserializeAsync<JsonElement>(buffer, cancellationToken: cancellationToken);
 }

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Murchalka.ModuleProtocol.Contracts;
 using Murchalka.Runtime.Contracts.Manifests;
+using RuntimeProtocolContribution = Murchalka.Runtime.Contracts.Manifests.ProtocolContribution;
 
 namespace Murchalka.Runtime.RootSecurity.Manifests;
 
@@ -62,6 +63,7 @@ public static class ManifestReader
         var pipelineContributions = ReadPipelineContributions(contributions?["pipelines"]);
         var events = contributions?["events"]?.AsObject();
         var uiComponents = ReadUiComponents(contributions?["ui"]?["components"]);
+        var protocolContributions = ReadProtocolContributions(contributions?["protocols"], capabilities);
         var eventPublications = ReadEventPublications(events?["publications"]);
         var eventSubscriptions = ReadEventSubscriptions(events?["subscriptions"]);
         var pipelineDefinitionPaths = ReadPipelineDefinitionPaths(root["extensions"]);
@@ -84,7 +86,8 @@ public static class ManifestReader
             JsonSerializer.SerializeToElement(root))
         {
             ClientArtifacts = clientArtifacts,
-            UiComponents = uiComponents
+            UiComponents = uiComponents,
+            ProtocolContributions = protocolContributions
         };
     }
 
@@ -116,6 +119,36 @@ public static class ManifestReader
                 legacySchema ?? RequiredString(value, "eventsSchema"));
         }).ToArray()
         : [];
+
+    private static RuntimeProtocolContribution[] ReadProtocolContributions(JsonNode? node, IReadOnlyList<ProvidedCapability> capabilities)
+    {
+        if (node is not JsonArray array) return [];
+        var contributions = array.Select(item =>
+        {
+            var value = item!.AsObject();
+            var limits = RequiredObject(value, "limits");
+            var handler = new CapabilityId(RequiredString(value, "handler"));
+            if (!capabilities.Any(capability => capability.Id == handler))
+                throw new InvalidDataException($"Protocol contribution handler '{handler}' is not a declared capability.");
+            return new RuntimeProtocolContribution(
+                RequiredString(value, "id"),
+                value["version"]?.GetValue<int>() ?? throw new InvalidDataException("Protocol contribution version is missing."),
+                RequiredString(value, "routeNamespace"),
+                handler,
+                RequiredString(value, "descriptor"),
+                ReadSet(value["transports"]),
+                ReadSet(value["authentication"]),
+                RequiredString(value, "streaming"),
+                limits["maxPayloadBytes"]?.GetValue<int>() ?? throw new InvalidDataException("Protocol payload limit is missing."),
+                limits["maxConcurrency"]?.GetValue<int>() ?? throw new InvalidDataException("Protocol concurrency limit is missing."),
+                ParseDuration(RequiredString(limits, "timeout")));
+        }).ToArray();
+        var duplicateId = contributions.GroupBy(value => value.Id, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (duplicateId is not null) throw new InvalidDataException($"Protocol contribution '{duplicateId.Key}' is duplicated.");
+        var duplicateRoute = contributions.GroupBy(value => value.RouteNamespace, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (duplicateRoute is not null) throw new InvalidDataException($"Protocol route namespace '{duplicateRoute.Key}' is duplicated.");
+        return contributions;
+    }
 
     private static Dictionary<string, JsonElement> ReadValues(JsonNode? node) => node is JsonObject value
         ? value.ToDictionary(pair => pair.Key, pair => JsonSerializer.SerializeToElement(pair.Value), StringComparer.Ordinal)

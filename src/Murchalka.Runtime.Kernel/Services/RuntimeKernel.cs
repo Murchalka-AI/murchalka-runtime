@@ -234,6 +234,30 @@ public sealed class RuntimeKernel : IAsyncDisposable
     public async Task<IReadOnlyList<ModuleStatus>> GetStatusAsync(CancellationToken cancellationToken = default) =>
         (await _state.GetAllAsync(cancellationToken).ConfigureAwait(false)).Select(ToStatus).OrderBy(value => value.ModuleId, StringComparer.Ordinal).ToArray();
 
+    /// <summary>Gets external protocol contributions from active verified modules.</summary>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The active protocol contributions ordered by route namespace and module.</returns>
+    public async Task<IReadOnlyList<ActiveProtocolContribution>> GetProtocolContributionsAsync(CancellationToken cancellationToken = default)
+    {
+        var records = (await _state.GetAllAsync(cancellationToken).ConfigureAwait(false))
+            .Where(value => value.State == ModuleLifecycleState.Active && value.DesiredEnabled)
+            .OrderBy(value => value.ModuleId.Value, StringComparer.Ordinal)
+            .ToArray();
+        var result = new List<ActiveProtocolContribution>();
+        foreach (var record in records)
+        {
+            var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false);
+            if (installed is null) continue;
+            result.AddRange(installed.Manifest.ProtocolContributions.Select(contribution =>
+                new ActiveProtocolContribution(installed.Manifest.Id, installed.Manifest.Version, contribution)));
+        }
+
+        return result
+            .OrderBy(value => value.Contribution.RouteNamespace, StringComparer.Ordinal)
+            .ThenBy(value => value.ModuleId.Value, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     /// <summary>Gets the current validated administrative bindings.</summary>
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     /// <returns>The current binding document.</returns>
@@ -332,6 +356,87 @@ public sealed class RuntimeKernel : IAsyncDisposable
             ["revision"] = version.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture)
         }, cancellationToken).ConfigureAwait(false);
         return version;
+    }
+
+    /// <summary>Gets the effective permission decision for an installed module.</summary>
+    /// <param name="moduleId">The module identifier.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The effective decision, or <see langword="null"/> when the module is unknown.</returns>
+    public async Task<PermissionDecision?> GetPermissionGrantAsync(ModuleId moduleId, CancellationToken cancellationToken = default)
+    {
+        var record = await _state.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+        if (record is null) return null;
+        var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Installed bundle is missing.");
+        var verified = await _verifier.VerifyAsync(installed.BundlePath, cancellationToken).ConfigureAwait(false);
+        return await _grants.EvaluateAsync(verified, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Validates and atomically replaces a signed permission grant.</summary>
+    /// <param name="moduleId">The module identifier.</param>
+    /// <param name="document">The complete signed grant document.</param>
+    /// <param name="expectedRevision">The revision observed by the administrator, or zero when no grant exists.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>The effective committed decision, or <see langword="null"/> when the module is unknown.</returns>
+    public async Task<PermissionDecision?> ReplacePermissionGrantAsync(
+        ModuleId moduleId,
+        JsonElement document,
+        long expectedRevision,
+        CancellationToken cancellationToken = default)
+    {
+        var gate = Gate(moduleId.Value);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        PermissionDecision? committed;
+        var reconcile = false;
+        try
+        {
+            var record = await _state.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+            if (record is null) return null;
+            var installed = await _store.OpenAsync(record.BundleDigest, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Installed bundle is missing.");
+            var verified = await _verifier.VerifyAsync(installed.BundlePath, cancellationToken).ConfigureAwait(false);
+            var decision = await _grants.ValidateAsync(verified, document, cancellationToken).ConfigureAwait(false);
+            if (!decision.Granted) throw new InvalidDataException($"Permission grant was rejected: {decision.ReasonCode}.");
+
+            var jsonPath = Path.Combine(_paths.Grants, moduleId.Value + ".json");
+            var yamlPath = Path.Combine(_paths.Grants, moduleId.Value + ".yaml");
+            var currentPath = File.Exists(jsonPath) ? jsonPath : File.Exists(yamlPath) ? yamlPath : null;
+            var actualRevision = currentPath is null ? 0 : File.GetLastWriteTimeUtc(currentPath).Ticks;
+            if (actualRevision != expectedRevision) throw new PermissionGrantRevisionConflictException(expectedRevision, actualRevision);
+
+            Directory.CreateDirectory(_paths.Grants);
+            var temporary = jsonPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                await File.WriteAllTextAsync(temporary, document.GetRawText(), cancellationToken).ConfigureAwait(false);
+                File.Move(temporary, jsonPath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+
+            committed = await _grants.EvaluateAsync(verified, cancellationToken).ConfigureAwait(false);
+            if (!committed.Granted) throw new InvalidDataException($"Stored permission grant was rejected: {committed.ReasonCode}.");
+            await _audit.AppendAsync("permission-grant.revised", moduleId.Value, "success", "signed-grant-committed", new Dictionary<string, string?>
+            {
+                ["grantId"] = committed.GrantId,
+                ["revision"] = committed.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["expiresAt"] = committed.ExpiresAt?.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (record.State == ModuleLifecycleState.Active)
+                await RestartUnderGateAsync(record, installed, cancellationToken).ConfigureAwait(false);
+            else
+                reconcile = record.DesiredEnabled;
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        if (reconcile) await ReconcilePendingAsync(cancellationToken).ConfigureAwait(false);
+        return committed;
     }
 
     /// <summary>Exports one declared module-owned storage namespace.</summary>
@@ -1073,6 +1178,10 @@ public sealed class RuntimeKernel : IAsyncDisposable
     {
         ModuleActivationException activation => activation.ReasonCode,
         PipelineExecutionException pipeline => pipeline.ReasonCode,
+        InvalidDataException invalid when invalid.Message.StartsWith("Expected protocol frame", StringComparison.Ordinal) => "protocol-frame-kind-mismatch",
+        InvalidDataException invalid when invalid.Message.StartsWith("Control result operation id", StringComparison.Ordinal) => "control-operation-mismatch",
+        InvalidDataException invalid when invalid.Message.StartsWith("Frame '", StringComparison.Ordinal) => "protocol-frame-payload-invalid",
+        InvalidDataException => "protocol-invalid",
         _ => exception.GetType().Name.ToLowerInvariant()
     });
     private static ModuleStatus ToStatus(InstalledModuleRecord value) => new(value.ModuleId.Value, value.Version.ToString(), value.BundleDigest, value.State, value.Revision, value.UpdatedAt, value.ReasonCode, value.InstanceId, value.DesiredEnabled);

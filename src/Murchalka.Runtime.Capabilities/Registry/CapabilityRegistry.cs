@@ -84,6 +84,7 @@ public sealed class CapabilityRegistry : ICapabilityRegistry
         var effectiveDeadline = invocation.Deadline < now.Add(provider.Timeout) ? invocation.Deadline : now.Add(provider.Timeout);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(effectiveDeadline - now);
+        await AuditProtocolActivityAsync("started", "protocol-request-accepted", invocation, provider, null, cancellationToken).ConfigureAwait(false);
         try
         {
             var result = await session.InvokeAsync(invocation with { Deadline = effectiveDeadline }, deadline.Token).ConfigureAwait(false);
@@ -96,6 +97,7 @@ public sealed class CapabilityRegistry : ICapabilityRegistry
                 ["invocationId"] = invocation.InvocationId.ToString("D"),
                 ["consumer"] = invocation.ConsumerModuleId.Value
             }, cancellationToken).ConfigureAwait(false);
+            await AuditProtocolActivityAsync(ProtocolOutcome(result), ProtocolReason(result), invocation, provider, result, cancellationToken).ConfigureAwait(false);
             return result;
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
@@ -106,9 +108,49 @@ public sealed class CapabilityRegistry : ICapabilityRegistry
                 ["instance"] = provider.InstanceId.Value,
                 ["invocationId"] = invocation.InvocationId.ToString("D")
             }, CancellationToken.None).ConfigureAwait(false);
+            await AuditProtocolActivityAsync("cancelled", "protocol-request-cancelled", invocation, provider, null, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
     }
+
+    private async ValueTask AuditProtocolActivityAsync(
+        string outcome,
+        string reason,
+        InvocationEnvelope invocation,
+        CapabilityProvider provider,
+        ResultEnvelope? result,
+        CancellationToken cancellationToken)
+    {
+        if (!invocation.Purpose.StartsWith("protocol-", StringComparison.Ordinal) && invocation.Purpose != "external-protocol-request") return;
+        var details = new Dictionary<string, string?>
+        {
+            ["activity"] = invocation.Purpose,
+            ["capability"] = provider.CapabilityId.Value,
+            ["provider"] = provider.ModuleId.Value,
+            ["consumer"] = invocation.ConsumerModuleId.Value,
+            ["invocationId"] = invocation.InvocationId.ToString("D"),
+            ["correlationId"] = invocation.CorrelationId,
+            ["statusCode"] = ProtocolStatusCode(result)
+        };
+        await _audit.AppendAsync("protocol.activity", provider.ModuleId.Value, outcome, reason, details, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string ProtocolOutcome(ResultEnvelope result)
+    {
+        if (result.Status != InvocationStatus.Succeeded) return result.Status.ToString().ToLowerInvariant();
+        return int.TryParse(ProtocolStatusCode(result), out var status) && status >= 400 ? "denied" : "success";
+    }
+
+    private static string ProtocolReason(ResultEnvelope result)
+    {
+        if (result.Error is { } error) return error.Code;
+        return int.TryParse(ProtocolStatusCode(result), out var status) && status >= 400 ? $"protocol-http-{status}" : "protocol-request-completed";
+    }
+
+    private static string? ProtocolStatusCode(ResultEnvelope? result) =>
+        result?.Payload is { } payload && payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("statusCode", out var statusCode) && statusCode.TryGetInt32(out var value)
+            ? value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : null;
 
     private static string ResolveInside(string root, string relative)
     {

@@ -47,8 +47,27 @@ public sealed class PermissionGrantStore : IPermissionGrantStore
         try { document = StructuredDocument.Load(path); }
         catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
         { return Task.FromResult(Denied("grant-invalid:" + exception.GetType().Name)); }
+        return Task.FromResult(Evaluate(bundle, document, File.GetLastWriteTimeUtc(path).Ticks));
+    }
+
+    /// <inheritdoc />
+    public Task<PermissionDecision> ValidateAsync(VerifiedBundle bundle, JsonElement document, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(bundle);
+        JsonNode? node;
+        try { node = JsonNode.Parse(document.GetRawText()); }
+        catch (JsonException) { return Task.FromResult(Denied("grant-invalid:JsonException")); }
+        return Task.FromResult(node is null ? Denied("grant-invalid:empty") : Evaluate(bundle, node, 0));
+    }
+
+    private PermissionDecision Evaluate(VerifiedBundle bundle, JsonNode document, long revision)
+    {
+        var requested = JsonNode.Parse(bundle.Manifest.RequestedPermissions.GetRawText()) ?? new JsonObject();
+        if (IsEffectivelyEmpty(requested))
+            return new PermissionDecision(true, "implicit-empty-grant", "implicit-empty", revision, JsonSerializer.SerializeToElement(new JsonObject()), null);
         var report = _schemas.ValidateJson("permission-grant.schema.json", document);
-        if (!report.IsValid) return Task.FromResult(Denied("grant-schema-invalid"));
+        if (!report.IsValid) return Denied("grant-schema-invalid");
         var root = document.AsObject();
         var metadata = root["metadata"]!.AsObject();
         var grant = root["grant"]!;
@@ -56,15 +75,15 @@ public sealed class PermissionGrantStore : IPermissionGrantStore
         if (metadata["module"]!.GetValue<string>() != bundle.Manifest.Id.Value ||
             !VersionRangeExpression.Parse(metadata["moduleVersionRange"]!.GetValue<string>()).Satisfies(bundle.Manifest.Version) ||
             metadata["bundleDigest"]!.GetValue<string>() != bundle.Identity.Digest)
-            return Task.FromResult(Denied("grant-identity-mismatch"));
+            return Denied("grant-identity-mismatch");
         var issuedAt = DateTimeOffset.Parse(metadata["issuedAt"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind);
         DateTimeOffset? expiresAt = metadata["expiresAt"] is null ? null : DateTimeOffset.Parse(metadata["expiresAt"]!.GetValue<string>(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind);
         var now = _timeProvider.GetUtcNow();
-        if (issuedAt > now.AddMinutes(1) || expiresAt is not null && expiresAt <= now) return Task.FromResult(Denied("grant-expired-or-not-yet-valid"));
-        if (!VerifySignature(root, signature)) return Task.FromResult(Denied("grant-signature-invalid"));
-        if (!Contains(grant, requested)) return Task.FromResult(Denied("grant-does-not-cover-request"));
+        if (issuedAt > now.AddMinutes(1) || expiresAt is not null && expiresAt <= now) return Denied("grant-expired-or-not-yet-valid");
+        if (!VerifySignature(root, signature)) return Denied("grant-signature-invalid");
+        if (!Contains(grant, requested)) return Denied("grant-does-not-cover-request");
         var grantId = metadata["grantId"]!.GetValue<string>();
-        return Task.FromResult(new PermissionDecision(true, "grant-valid", grantId, File.GetLastWriteTimeUtc(path).Ticks, JsonSerializer.SerializeToElement(grant), expiresAt));
+        return new PermissionDecision(true, "grant-valid", grantId, revision, JsonSerializer.SerializeToElement(grant), expiresAt);
     }
 
     private bool VerifySignature(JsonObject root, JsonObject signature)

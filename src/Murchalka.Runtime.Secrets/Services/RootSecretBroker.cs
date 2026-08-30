@@ -64,6 +64,8 @@ public sealed class RootSecretBroker : ISecretBroker
     private static bool ContainsSecret(JsonElement document, string name)
     {
         if (document.ValueKind != JsonValueKind.Object || !document.TryGetProperty("secrets", out var secrets) || secrets.ValueKind != JsonValueKind.Array) return false;
-        return secrets.EnumerateArray().Any(value => string.Equals(value.GetString(), name, StringComparison.Ordinal));
+        return secrets.EnumerateArray().Any(value =>
+            value.ValueKind == JsonValueKind.String && string.Equals(value.GetString(), name, StringComparison.Ordinal) ||
+            value.ValueKind == JsonValueKind.Object && value.TryGetProperty("reference", out var reference) && string.Equals(reference.GetString(), name, StringComparison.Ordinal));
     }
 }

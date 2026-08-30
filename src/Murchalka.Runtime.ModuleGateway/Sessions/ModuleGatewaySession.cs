@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using Murchalka.ModuleProtocol.Contracts;
@@ -19,6 +20,11 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     private readonly Channel<GatewayFrame> _secretRequests = Channel.CreateBounded<GatewayFrame>(new BoundedChannelOptions(32) { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
     private readonly Channel<GatewayFrame> _dependencyInvocations = Channel.CreateBounded<GatewayFrame>(new BoundedChannelOptions(128) { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly ConcurrentDictionary<Guid, byte> _abandonedInvocations = new();
+    private readonly ConcurrentDictionary<Guid, byte> _queuedDependencyInvocations = new();
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _activeDependencyInvocations = new();
+    private readonly ConcurrentDictionary<Guid, string> _dependencyCancellationReasons = new();
+    private readonly ConcurrentDictionary<Guid, Task> _dependencyInvocationTasks = new();
     private readonly Task _reader;
     private readonly Task _publicationReader;
     private readonly Task _secretRequestReader;
@@ -107,7 +113,13 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
 
     private async Task<ControlResult> SendControlAsync(ControlMessage operation, CancellationToken cancellationToken)
     {
-        var frame = await ExchangeAsync("control", operation, "controlResult", cancellationToken).ConfigureAwait(false);
+        using var deadline = CreateDeadlineToken(operation.Deadline, cancellationToken);
+        GatewayFrame frame;
+        try { frame = await ExchangeAsync("control", operation, "controlResult", deadline.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Module control operation '{operation.Kind}' exceeded its deadline.");
+        }
         var result = GatewayFrameCodec.PayloadAs<ControlResult>(frame);
         if (result.OperationId != operation.OperationId) throw new InvalidDataException("Control result operation id does not match the request.");
         return result;
@@ -118,7 +130,29 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
     {
         ArgumentNullException.ThrowIfNull(invocation);
         if (invocation.Deadline <= DateTimeOffset.UtcNow) throw new TimeoutException("Invocation deadline has elapsed.");
-        var frame = await ExchangeAsync("invocation", invocation, "result", cancellationToken).ConfigureAwait(false);
+        using var deadline = CreateDeadlineToken(invocation.Deadline, cancellationToken);
+        GatewayFrame frame;
+        try
+        {
+            await _exchangeGate.WaitAsync(deadline.Token).ConfigureAwait(false);
+            try
+            {
+                await WriteAsync("invocation", invocation, deadline.Token).ConfigureAwait(false);
+                try { frame = await ReadExpectedResponseAsync("result", deadline.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException)
+                {
+                    _abandonedInvocations.TryAdd(invocation.InvocationId, 0);
+                    await TrySendCancellationAsync(invocation.InvocationId,
+                        cancellationToken.IsCancellationRequested ? "caller-cancelled" : "deadline-exceeded").ConfigureAwait(false);
+                    throw;
+                }
+            }
+            finally { _exchangeGate.Release(); }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Module invocation exceeded its deadline.");
+        }
         var result = GatewayFrameCodec.PayloadAs<ResultEnvelope>(frame);
         if (result.InvocationId != invocation.InvocationId) throw new InvalidDataException("Result invocation id does not match the request.");
         return result;
@@ -131,11 +165,44 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
         try
         {
             await WriteAsync(requestKind, request, cancellationToken).ConfigureAwait(false);
-            var frame = await _responses.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.Equals(frame.Kind, responseKind, StringComparison.Ordinal)) throw new InvalidDataException($"Expected protocol frame '{responseKind}', received '{frame.Kind}'.");
-            return frame;
+            return await ReadExpectedResponseAsync(responseKind, cancellationToken).ConfigureAwait(false);
         }
         finally { _exchangeGate.Release(); }
+    }
+
+    private async Task<GatewayFrame> ReadExpectedResponseAsync(string responseKind, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var frame = await _responses.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (string.Equals(frame.Kind, "result", StringComparison.Ordinal))
+            {
+                var result = GatewayFrameCodec.PayloadAs<ResultEnvelope>(frame);
+                if (_abandonedInvocations.TryRemove(result.InvocationId, out _)) continue;
+            }
+            if (!string.Equals(frame.Kind, responseKind, StringComparison.Ordinal))
+                throw new InvalidDataException($"Expected protocol frame '{responseKind}', received '{frame.Kind}'.");
+            return frame;
+        }
+    }
+
+    private async Task TrySendCancellationAsync(Guid invocationId, string reason)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await WriteAsync("invocationCancellation", new { invocationId, reason }, timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException or OperationCanceledException) { }
+    }
+
+    private static CancellationTokenSource CreateDeadlineToken(DateTimeOffset deadline, CancellationToken cancellationToken)
+    {
+        var result = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var remaining = deadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero) result.Cancel();
+        else result.CancelAfter(remaining);
+        return result;
     }
 
     private async Task ReadLoopAsync(CancellationToken cancellationToken)
@@ -158,7 +225,21 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
                 }
                 if (string.Equals(frame.Kind, "capabilityInvocation", StringComparison.Ordinal))
                 {
+                    var invocation = GatewayFrameCodec.PayloadAs<InvocationEnvelope>(frame);
+                    if (!_queuedDependencyInvocations.TryAdd(invocation.InvocationId, 0))
+                        throw new InvalidDataException("Duplicate dependency invocation identifier.");
                     await _dependencyInvocations.Writer.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                if (string.Equals(frame.Kind, "capabilityCancellation", StringComparison.Ordinal))
+                {
+                    var cancellation = GatewayFrameCodec.PayloadAs<JsonElement>(frame);
+                    var invocationId = cancellation.GetProperty("invocationId").GetGuid();
+                    var reason = cancellation.GetProperty("reason").GetString() ?? "caller-cancelled";
+                    if (_activeDependencyInvocations.TryGetValue(invocationId, out var active))
+                        active.Cancel();
+                    else if (_queuedDependencyInvocations.ContainsKey(invocationId))
+                        _dependencyCancellationReasons[invocationId] = reason;
                     continue;
                 }
                 await _responses.Writer.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
@@ -221,29 +302,72 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
             await foreach (var frame in _dependencyInvocations.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
             {
                 var invocation = GatewayFrameCodec.PayloadAs<InvocationEnvelope>(frame);
-                ResultEnvelope result;
-                var endpoint = Volatile.Read(ref _dependencies).Endpoints.SingleOrDefault(value =>
-                    value.ProviderInstance == invocation.ProviderInstance &&
-                    value.Capability == invocation.CapabilityId &&
-                    value.CapabilityVersion == invocation.CapabilityVersion);
-                if (invocation.ConsumerModuleId != Hello.ModuleId)
-                    result = DependencyFailure(invocation.InvocationId, "consumer-identity-mismatch", ErrorCategory.PermissionDenied, "Invocation consumer does not match the authenticated module session.");
-                else if (endpoint is null || !string.Equals(endpoint.AuthorizationReference, invocation.AuthorizationGrantReference, StringComparison.Ordinal))
-                    result = DependencyFailure(invocation.InvocationId, "dependency-not-granted", ErrorCategory.PermissionDenied, "Invocation does not match a current granted dependency endpoint.");
-                else if (_dependencyInvoker is null)
-                    result = DependencyFailure(invocation.InvocationId, "dependency-router-unavailable", ErrorCategory.Unavailable, "Dependency routing is unavailable before activation.");
-                else
+                var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                if (!_activeDependencyInvocations.TryAdd(invocation.InvocationId, lifetime))
                 {
-                    try { result = await _dependencyInvoker(invocation, cancellationToken).ConfigureAwait(false); }
-                    catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-                    {
-                        result = DependencyFailure(invocation.InvocationId, "dependency-invocation-failed", ErrorCategory.Unavailable, "Granted dependency invocation failed.");
-                    }
+                    lifetime.Dispose();
+                    _queuedDependencyInvocations.TryRemove(invocation.InvocationId, out _);
+                    continue;
                 }
-                await WriteAsync("capabilityResult", result, cancellationToken).ConfigureAwait(false);
+                _queuedDependencyInvocations.TryRemove(invocation.InvocationId, out _);
+                if (_dependencyCancellationReasons.TryRemove(invocation.InvocationId, out _)) lifetime.Cancel();
+                var task = TrackDependencyInvocationAsync(invocation, lifetime, cancellationToken);
+                _dependencyInvocationTasks[invocation.InvocationId] = task;
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    private async Task TrackDependencyInvocationAsync(
+        InvocationEnvelope invocation,
+        CancellationTokenSource lifetime,
+        CancellationToken shutdownToken)
+    {
+        await Task.Yield();
+        await HandleDependencyInvocationAsync(invocation, lifetime, shutdownToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleDependencyInvocationAsync(
+        InvocationEnvelope invocation,
+        CancellationTokenSource lifetime,
+        CancellationToken shutdownToken)
+    {
+        try
+        {
+            ResultEnvelope result;
+            var endpoint = Volatile.Read(ref _dependencies).Endpoints.SingleOrDefault(value =>
+                value.ProviderInstance == invocation.ProviderInstance &&
+                value.Capability == invocation.CapabilityId &&
+                value.CapabilityVersion == invocation.CapabilityVersion);
+            if (invocation.ConsumerModuleId != Hello.ModuleId)
+                result = DependencyFailure(invocation.InvocationId, "consumer-identity-mismatch", ErrorCategory.PermissionDenied, "Invocation consumer does not match the authenticated module session.");
+            else if (endpoint is null || !string.Equals(endpoint.AuthorizationReference, invocation.AuthorizationGrantReference, StringComparison.Ordinal))
+                result = DependencyFailure(invocation.InvocationId, "dependency-not-granted", ErrorCategory.PermissionDenied, "Invocation does not match a current granted dependency endpoint.");
+            else if (_dependencyInvoker is null)
+                result = DependencyFailure(invocation.InvocationId, "dependency-router-unavailable", ErrorCategory.Unavailable, "Dependency routing is unavailable before activation.");
+            else
+            {
+                try { result = await _dependencyInvoker(invocation, lifetime.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+                {
+                    result = new ResultEnvelope(invocation.InvocationId, InvocationStatus.Cancelled, null,
+                        new ProtocolError("invocation-cancelled", ErrorCategory.Cancelled, false, "Dependency invocation was cancelled by its caller.", null), null, [], [], null);
+                }
+                catch (Exception)
+                {
+                    result = DependencyFailure(invocation.InvocationId, "dependency-invocation-failed", ErrorCategory.Unavailable, "Granted dependency invocation failed.");
+                }
+            }
+            await WriteAsync("capabilityResult", result, shutdownToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested) { }
+        finally
+        {
+            _activeDependencyInvocations.TryRemove(invocation.InvocationId, out _);
+            _dependencyInvocationTasks.TryRemove(invocation.InvocationId, out _);
+            _dependencyCancellationReasons.TryRemove(invocation.InvocationId, out _);
+            lifetime.Dispose();
+        }
     }
 
     private static ResultEnvelope DependencyFailure(Guid invocationId, string code, ErrorCategory category, string message) =>
@@ -322,6 +446,8 @@ public sealed class ModuleGatewaySession : IModuleGatewaySession
         catch (Exception) when (_shutdown.IsCancellationRequested) { }
         try { await _dependencyInvocationReader.ConfigureAwait(false); }
         catch (Exception) when (_shutdown.IsCancellationRequested) { }
+        foreach (var invocation in _activeDependencyInvocations.Values) invocation.Cancel();
+        await Task.WhenAll(_dependencyInvocationTasks.Values).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         _exchangeGate.Dispose();
         _writeGate.Dispose();
         _shutdown.Dispose();
