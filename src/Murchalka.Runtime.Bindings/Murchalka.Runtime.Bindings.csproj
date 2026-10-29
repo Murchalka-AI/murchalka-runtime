@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><Description>Revisioned scoped administrative capability bindings.</Description></PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" />
     <ProjectReference Include="../Murchalka.Runtime.Contracts/Murchalka.Runtime.Contracts.csproj" />
     <PackageReference Include="Murchalka.ModuleProtocol.Json" />
   </ItemGroup>
